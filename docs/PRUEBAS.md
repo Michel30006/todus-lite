@@ -11,13 +11,14 @@ cd todus-lite
 python3 -m unittest discover -s tests -v
 ```
 
-Resultado: **35 pruebas OK** (`Ran 35 tests ... OK`).
+Resultado: **45 pruebas OK** (`Ran 45 tests ... OK`).
 
 | Archivo | Qué comprueba |
 |---|---|
 | `tests/test_protocol.py` | Tabla v1 (SHA, unicidad, sin `|`/XML), ida y vuelta de bytes, números/JID, tramas, límite 8192, CRC, desorden, duplicados, extensión. |
 | `tests/test_todus_parse.py` | Stanzas abreviadas de ToDus (`<m>`, `<b>`, `t/i/f/o`), `<ok/>`, stream, body, atributos, escapes. |
 | `tests/test_receiver.py` | El receptor reconstruye un fichero de 120 KB con tramas desordenadas y rechaza tramas corruptas. |
+| `tests/test_download.py` | Detección de YouTube/páginas, validación de MP4/WebM/AVI y SHA-256. |
 
 ## 2. Interoperabilidad con el receptor C++ del kkk
 
@@ -76,6 +77,22 @@ de DNS; por eso el código ahora reintenta y cachea la IP.)
   `b0a96be9eb206925ef79c1ed005a8f8c567c25b528b1ee68fc0aa1df8691fd91`.
 - Resultado: **OK**, acuse `<tdack>` y fichero reconstruido.
 
+### 3.3b YouTube real (Codespace → ToDus → teléfono)
+
+- Enlace: `https://youtube.com/shorts/s1aE_t_iWhI`
+- Descarga: **yt-dlp 2026.10.26** + **Deno 2.9.8** + **yt-dlp-ejs 0.8.0**
+  + cookies de `.youtube.com` (25 cookies).
+- Emisor: Codespace `todus-lite-4q6p9jqxv9rxfqpp9`, cuenta `5358799457`.
+- Receptor: local, cuenta `5358548838`, salida a `/sdcard/Download`.
+- Calidad: 480p (selector limitado para caber en 25 MiB).
+- Fichero descargado: 3.836.131 bytes (3,7 MiB).
+- SHA-256: `3a0b1f6675506db90d200f0febd5477950678cb7c246ba612988264ad2c12c9c`
+- Tramas: **766/766**, 0 rechazadas.
+- Salida en el teléfono: `/sdcard/Download/d46a11db6c2b9c55.mp4`.
+- SHA-256 recibido: **idéntico** al descargado.
+- Resultado: **OK**. Es la prueba real completa: YouTube → Codespace →
+  codificación → ToDus → teléfono → MP4 reproducible.
+
 ### 3.4 Fichero de 64 KiB (14 tramas)
 
 - Emisor: `5358799457` (`tds-lite-sender`).
@@ -125,6 +142,6 @@ Compara el SHA-256 del emisor y del receptor.
 - El receptor ejecutándose en el teléfono real del usuario (solo en el
   Codespace).
 - Vídeos grandes (5/25 MiB) por ToDus real; solo se midió 64 KiB.
-- Enlaces de vídeo reales (no se descargó ningún vídeo de Internet en estas
-  pruebas).
+- ~~Enlaces de vídeo reales~~: ya se probó un Short de YouTube (ver 3.3b).
+- Otros enlaces (TikTok/Instagram) no se probaron.
 - Extracción desde YouTube/TikTok (no implementada).

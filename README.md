@@ -95,11 +95,36 @@ el número (sin contraseña). **No se guardan tokens ni contraseñas.**
 
 ## Enlaces de vídeo
 
-Se admiten enlaces **directos** `http://` o `https://` que devuelvan el
-fichero (por ejemplo, un `.mp4` alojado en un servidor). No se admiten páginas
-HTML de YouTube/TikTok ni enlaces que requieran JavaScript: el script detecta
-HTML y avisa. Para esos casos haría falta añadir `yt-dlp` (pendiente,
-ver [docs/CONTINUIDAD.md](docs/CONTINUIDAD.md)).
+Se admiten:
+
+- Enlaces **directos** `http://` o `https://` a un fichero (`.mp4`, `.webm`...).
+- **YouTube, TikTok, Instagram, Facebook, X/Twitter, Vimeo...** mediante
+  `yt-dlp`. Para YouTube hace falta un runtime JavaScript (**Deno**) y el
+  solver **EJS**; el `.devcontainer` del proyecto los instala solos.
+
+El emisor detecta si el enlace es una página y usa `yt-dlp`; si es un fichero
+directo, usa la descarga HTTP normal. Por defecto limita la calidad a **480p**
+para que el vídeo quepa en el límite de 25 MiB y se envíe en un tiempo
+razonable.
+
+### Cookies de YouTube
+
+YouTube suele exigir cookies de una sesión iniciada, sobre todo desde IPs de
+Codespace. El emisor busca automáticamente:
+
+```text
+~/.config/tds/cookies.txt
+```
+
+o la ruta de `--cookies` / `TDS_COOKIES_FILE`. En el Codespace del proyecto
+estas cookies se restauran desde el secreto de Codespaces `TDS_COOKIES_B64`
+(definido en `.devcontainer/setup.sh`), así que sobreviven a reinicios y
+recreaciones. **No se guardan en el repositorio.**
+
+Formato: fichero de cookies **Netscape** exportado del navegador
+(por ejemplo, la extensión "Get cookies.txt LOCALLY"). Contiene cookies de
+`.youtube.com` (`SID`, `HSID`, `SSID`, `APISID`, `SAPISID`, `LOGIN_INFO`,
+`__Secure-*`).
 
 ## Límites y tiempos
 
@@ -109,6 +134,8 @@ ver [docs/CONTINUIDAD.md](docs/CONTINUIDAD.md)).
 - La tabla v1 ocupa ~**1,66 bytes de texto por byte de vídeo**.
 - Referencia: 64 KiB → 14 tramas; 1 MiB → 214 tramas; 25 MiB → ~5370 tramas
   (~11 minutos solo de envío, más los acuses).
+- Prueba real de YouTube: Short de 3,7 MiB → **766 tramas** y **SHA-256
+  idéntico** en el teléfono.
 
 ## Estructura
 
@@ -117,15 +144,17 @@ todus-lite/
 ├── enviar.py              # emisor interactivo (Codespace)
 ├── receptor.py            # receptor interactivo (teléfono / Linux)
 ├── receptor.sh            # lanzador que pregunta número y usa C++ o Python
+├── .devcontainer/         # Codespace: sshd, Deno/EJS, yt-dlp y cookies
 ├── tds_lite/
 │   ├── table_v1.py        # tabla de codificación v1 (256 símbolos)
 │   ├── protocol.py        # codificación, tramas TDS1, reensamblado, JID
 │   ├── todus.py           # JWT + cliente XMPP ToDus (stdlib)
-│   └── download.py        # descarga HTTP(S) con límite y SHA-256
+│   └── download.py        # HTTP(S) + yt-dlp (YouTube...), límite y SHA-256
 ├── tests/
 │   ├── test_protocol.py
 │   ├── test_todus_parse.py
 │   ├── test_receiver.py
+│   ├── test_download.py   # detección de URLs y validación de vídeo
 │   └── interop_kkk.py     # tramas Python -> receptor C++ del kkk
 └── docs/
     ├── USO.md
@@ -137,7 +166,7 @@ todus-lite/
 ## Pruebas
 
 ```bash
-python3 -m unittest discover -s tests -v       # 35 pruebas offline
+python3 -m unittest discover -s tests -v       # 45 pruebas offline
 python3 tests/interop_kkk.py                   # contra el receptor C++ del kkk
 python3 enviar.py --file mi_video.mp4 --to 58548838 --dry-run
 ```
@@ -150,7 +179,9 @@ no existe, se omite y no falla.
 | Variable | Uso | Defecto |
 |---|---|---|
 | `TODUS_SENDER` | número emisor | `58799457` |
+| `TODUS_TOKEN` | JWT ya obtenido (evita pedirlo) | vacío |
 | `TODUS_AUTH_URL` | endpoint del JWT | `https://auth.todus.cu/v2/auth/token` |
+| `TDS_COOKIES_FILE` | cookies de YouTube | `~/.config/tds/cookies.txt` |
 | `MAX_VIDEO_BYTES` | límite de descarga | `26214400` (25 MiB) |
 | `SEND_DELAY_MS` | pausa entre tramas | `120` |
 | `TDS_NUMBER` | número del receptor (receptor.sh) | pregunta / `58548838` |
@@ -181,7 +212,11 @@ el binario C++: SHA-256 idéntico byte a byte. Ver
 
 ## Seguridad y privacidad
 
-- No se incluyen tokens ni contraseñas. El JWT se obtiene en cada ejecución.
+- No se incluyen tokens ni contraseñas en el repositorio. El JWT se obtiene en
+  cada ejecución o se pasa por `TODUS_TOKEN`.
+- Las cookies de YouTube son equivalentes a la sesión de tu cuenta de Google:
+  trátalas como una contraseña. En el Codespace están en un secreto cifrado y
+  en `~/.config/tds/cookies.txt` con permisos `600`.
 - El vídeo viaja por TLS hasta el servidor de ToDus; no hay cifrado extremo a
   extremo propio (igual que en kkk).
 - El receptor acepta cualquier trama TDS1 dirigida a su cuenta; no hay firma
@@ -197,7 +232,10 @@ el binario C++: SHA-256 idéntico byte a byte. Ver
   reanudación persistente todavía). El receptor tolera duplicados.
 - El DNS de ToDus puede fallar de forma intermitente; hay reintentos y caché
   de IP, pero puede tardar unos segundos.
-- No se soportan páginas HTML ni enlaces con extracción (YouTube, etc.).
+- YouTube cambia a menudo: si falla, actualiza `yt-dlp` y renueva las cookies.
+  Sin Deno/EJS, YouTube solo devuelve imágenes (storyboards).
+- El DNS/red de ToDus puede fallar de forma intermitente también desde el
+  Codespace; el emisor reintenta y acepta un JWT por `--token`.
 - Un vídeo grande tarda mucho: el límite práctico es el ritmo de ToDus.
 
 ## Documentación

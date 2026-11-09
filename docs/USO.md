@@ -83,8 +83,8 @@ Enlace del video: https://servidor.com/video.mp4
 Numero de telefono destino (sin 53 si es de 8 digitos) [58548838]:
 ```
 
-- El enlace debe ser **directo** al fichero (http/https). Si devuelve HTML,
-  el script avisa y no envía nada.
+- Puede ser un enlace **directo** (`.mp4`) o una página de **YouTube**,
+  TikTok, Instagram, Facebook, X/Twitter o Vimeo (se usa `yt-dlp`).
 - El número destino puede ser de 8 dígitos; el 53 se añade solo.
 - El emisor por defecto es `58799457`. Cámbialo con `TODUS_SENDER` o `--from`.
 
@@ -100,6 +100,38 @@ Enviadas 14/14 (100.0%) 1.0 tramas/s
 ENVIO COMPLETO
   ...
 ```
+
+### 3.1 YouTube y cookies
+
+YouTube exige cookies de una sesión iniciada y, desde 2026, un runtime
+JavaScript (**Deno**) con el solver **EJS**. En el Codespace del proyecto ya
+está todo instalado por `.devcontainer`:
+
+- `yt-dlp` + `yt-dlp-ejs` (pip)
+- `deno` en `~/.deno/bin/deno`
+- `~/.config/yt-dlp/config` con `--cookies` y `--js-runtimes`
+- cookies en `~/.config/tds/cookies.txt` (permisos `600`)
+
+El emisor usa esas cookies automáticamente. Si quieres usar otro fichero:
+
+```bash
+python3 enviar.py --cookies /ruta/cookies.txt
+# o
+TDS_COOKIES_FILE=/ruta/cookies.txt python3 enviar.py
+```
+
+El fichero debe estar en formato **Netscape** y contener cookies de
+`.youtube.com` (`SID`, `HSID`, `SSID`, `APISID`, `SAPISID`, `LOGIN_INFO`,
+`__Secure-*`). Para exportarlas desde el navegador se puede usar la extensión
+"Get cookies.txt LOCALLY".
+
+Si YouTube cambia y falla, actualiza:
+
+```bash
+python3 -m pip install --user -U "yt-dlp[default]"
+```
+
+y renueva las cookies.
 
 ## 4. Cambiar el número del receptor
 
@@ -150,6 +182,14 @@ python3 enviar.py --max-mib 10
 
 # Cambiar la pausa entre tramas (ms)
 python3 enviar.py --send-delay-ms 200
+
+# Usar un JWT ya obtenido (evita pedirlo y los timeouts de auth)
+TODUS_TOKEN=... python3 enviar.py
+# o
+python3 enviar.py --token ...
+
+# Cookies de YouTube
+python3 enviar.py --cookies ~/.config/tds/cookies.txt
 
 # No verificar TLS (solo pruebas de laboratorio)
 python3 enviar.py --insecure-tls
@@ -204,6 +244,10 @@ el emisor la reintenta; el receptor tolera duplicados.
 | Síntoma | Causa / solución |
 |---|---|
 | `auth/token no accesible: ... name resolution` | DNS intermitente. El código reintenta y cachea la IP. Espera o vuelve a ejecutar. |
+| `auth/token no accesible: timed out` | Red intermitente (también pasa en Codespace). Reintenta; si persiste, obtén un JWT aparte y pásalo con `TODUS_TOKEN`. |
+| YouTube solo devuelve imágenes / `n challenge` | Falta Deno o EJS. Ejecuta `.devcontainer/setup.sh` y comprueba `~/.config/yt-dlp/config`. |
+| `Sign in to confirm you're not a bot` | Cookies caducadas o ausentes. Renueva `~/.config/tds/cookies.txt`. |
+| `Requested format is not available` | El selector de formato no encontró vídeo; actualiza `yt-dlp` y revisa las cookies. |
 | El receptor no recibe nada | Se lanzó el emisor antes que el receptor. Reinicia el emisor después de ver `LISTO`. |
 | El receptor no recibe y la app ToDus sí | La app Android puede estar conectada a la misma cuenta. Ciérrala o usa otra cuenta/recurso. |
 | `el enlace devolvio HTML` | No es un enlace directo. Usa la URL del fichero `.mp4`. |

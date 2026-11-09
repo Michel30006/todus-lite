@@ -1,9 +1,11 @@
 # Continuidad — estado del proyecto para otra IA
 
 > **Léeme primero si retomas este trabajo.**
-> Última actualización: **2026-11-08**, al 83 % de contexto agotado.
-> Proyecto: `/root/todus-lite`. Todo funciona y está probado salvo la prueba
-> definitiva con el teléfono del usuario.
+> Última actualización: **2026-11-09**, tras la prueba real de YouTube.
+> Proyecto: `/root/todus-lite`, repo privado
+> `https://github.com/Michel30006/todus-lite`.
+> Todo funciona y está probado de extremo a extremo:
+> **YouTube → Codespace → ToDus → teléfono**.
 
 ---
 
@@ -15,14 +17,22 @@
 - **Receptor** `receptor.py` / `receptor.sh`: pide número, antepone `53`
   automáticamente, escucha, reensambla y escribe el vídeo en
   `/sdcard/Download` o `recibidos/`.
-- **Probado de verdad contra ToDus**: JWT, bind XMPP, 1 trama y 64 KiB
-  (14/14, SHA idéntico). Interop con el receptor C++ del kkk: 214 tramas de
-  1 MiB, SHA idéntico.
-- **35 pruebas unitarias OK** tras los últimos cambios.
-- **Pendiente principal**: que el usuario arranque el receptor en su teléfono
-  y hacer una prueba real con un vídeo suyo.
-- No se ha descargado nada de Internet sin permiso; las pruebas usaron
-  `/dev/urandom` y ficheros locales.
+- **Probado de verdad contra ToDus**: JWT, bind XMPP, 1 trama, 64 KiB
+  (14/14) y **YouTube real** (3,7 MiB, **766/766 tramas, SHA idéntico**).
+  Interop con el receptor C++ del kkk: 214 tramas de 1 MiB, SHA idéntico.
+- **45 pruebas unitarias OK**.
+- **YouTube funciona** con `yt-dlp` + **Deno** + **EJS** + cookies de
+  `.youtube.com`. El emisor limita a 480p para caber en 25 MiB.
+- **Repo y Codespace ya creados**:
+  - repo privado `Michel30006/todus-lite`
+  - codespace `todus-lite-4q6p9jqxv9rxfqpp9`
+  - secreto de Codespaces `TDS_COOKIES_B64` (cookies de YouTube, restringido
+    al repo)
+- **Pendiente inmediato**: el usuario debe **revocar el token temporal de
+  GitHub** que pegó en el chat (tiene scopes amplios). El token no está
+  guardado en el repo.
+- No se descargó nada de Internet sin permiso; el usuario autorizó
+  explícitamente el Short de YouTube de la prueba.
 
 ---
 
@@ -55,8 +65,11 @@ Idioma de trabajo: **español**. Estilo: directo, sin rodeos.
 | `/root/todus-lite/tds_lite/table_v1.py` | Tabla v1 exacta + tablas de traducción. |
 | `/root/todus-lite/tds_lite/protocol.py` | Núcleo: codificación, tramas, CRC, reensamblado, JID. |
 | `/root/todus-lite/tds_lite/todus.py` | JWT, protobuf de auth, cliente XMPP, reintentos/DNS. |
-| `/root/todus-lite/tds_lite/download.py` | Descarga HTTP(S) con límite, progreso y SHA-256. |
-| `/root/todus-lite/tests/` | 35 pruebas + interop con C++. |
+| `/root/todus-lite/tds_lite/download.py` | HTTP(S) + yt-dlp (YouTube...), límite, validación y SHA-256. |
+| `/root/todus-lite/.devcontainer/` | Codespace: sshd, Deno/EJS, yt-dlp, cookies y config persistente. |
+| `/root/todus-lite/tests/` | 45 pruebas + interop con C++. |
+| `/sdcard/Download/juj.txt` | Export completo de cookies del navegador (sensible; no está en el repo). |
+| `/sdcard/Download/d46a11db6c2b9c55.mp4` | Vídeo recibido en la prueba real de YouTube. |
 | `/root/todus-lite/docs/` | USO, PROTOCOLO, PRUEBAS, CONTINUIDAD. |
 | `/root/kkk/` | Proyecto original (referencia, receptor C++ verificado). |
 | `/root/kkk/build/client/tds_receiver` | Receptor C++ usado en interop y opción de `receptor.sh`. |
@@ -80,8 +93,12 @@ Idioma de trabajo: **español**. Estilo: directo, sin rodeos.
       envío, `<tdack>`, bucle lector, reconexión básica.
 - [x] Caché de IP y reintentos de resolución en `XmppClient`.
 - [x] Descarga HTTP(S) con límite, progreso, SHA-256 y rechazo de HTML.
-- [x] Emisor interactivo con `--file`, `--to`, `--from`, `--dry-run`,
-      `--max-mib`, `--send-delay-ms`, `--insecure-tls`.
+- [x] **YouTube/TikTok/... con yt-dlp**, Deno/EJS, cookies Netscape y 480p.
+- [x] Cookies persistentes en Codespace: secreto `TDS_COOKIES_B64` +
+      `.devcontainer/setup.sh` + `~/.config/yt-dlp/config`.
+- [x] Emisor interactivo con `--file`, `--url`, `--to`, `--from`, `--token`,
+      `--cookies`, `--cookies-from-browser`, `--dry-run`, `--max-mib`,
+      `--send-delay-ms`, `--insecure-tls`.
 - [x] Receptor interactivo con `--number`, `--out`, `--once`, `--verbose`,
       escritura atómica y SHA-256.
 - [x] `receptor.sh` con prompt, normalización y selección C++/Python.
@@ -89,11 +106,13 @@ Idioma de trabajo: **español**. Estilo: directo, sin rodeos.
 - [x] Interop real con `tds_receiver` C++ (1 MiB, 214 tramas).
 - [x] Prueba real ToDus: 1 trama y 64 KiB con SHA idéntico.
 - [x] README, USO, PROTOCOLO, PRUEBAS y este CONTINUIDAD.
-- [ ] Prueba real con el teléfono del usuario.
-- [ ] Vídeo real de varios MiB.
-- [ ] (Opcional) Soporte de enlaces no directos vía `yt-dlp`.
+- [x] Prueba real con el teléfono del usuario (YouTube Short, 766 tramas).
+- [x] `git init` + push a GitHub + Codespace + secreto de cookies.
+- [ ] **Revocar el token temporal de GitHub** (lo hace el usuario).
+- [ ] (Opcional) Parar/eliminar el Codespace para no gastar cuota.
+- [ ] (Opcional) Probar vídeos de 5-25 MiB y otros sitios (TikTok, etc.).
 - [ ] (Opcional) Reanudación persistente de envíos.
-- [ ] (Opcional) `git init` + push a GitHub.
+- [ ] (Opcional) Fallback a `curl` si `urllib` da timeouts con ToDus.
 
 ---
 
@@ -185,7 +204,7 @@ cd /root/todus-lite
 python3 -m unittest discover -s tests -v
 ```
 
-Esperado: `Ran 35 tests ... OK`. (El test del receptor imprime su salida en
+Esperado: `Ran 45 tests ... OK`. (El test del receptor imprime su salida en
 stdout; es normal, no es un fallo.)
 
 ```bash
@@ -225,23 +244,39 @@ python3 -u enviar.py --file /tmp/entrada.bin --to 58548838 --from 58799457
 Comparar SHA-256. Tarda ~10-20 s en 14 tramas. **Nota:** el receptor debe
 estar ya escuchando; `--once` sale tras reconstruir.
 
-### 6.5 Prueba definitiva (la que falta)
+### 6.5 Prueba real de YouTube (ya superada)
 
 1. El usuario ejecuta en su teléfono (Termux):
-   `python3 receptor.py` (o `./receptor.sh`).
-2. Escribe el número del teléfono (8 dígitos; el 53 es automático).
-3. Espera `LISTO. Esperando tramas TDS1...`.
-4. En el Codespace: `python3 enviar.py` y pasa un enlace **directo** a un
-   vídeo pequeño (1-5 MiB) o un fichero local con `--file`.
-5. Comparar SHA-256 en ambos lados.
+   `python3 -u receptor.py --number 58548838 --out /sdcard/Download --once`
+   (o `./receptor.sh`).
+2. Espera `LISTO. Esperando tramas TDS1...`.
+3. En el Codespace:
+   ```bash
+   cd /workspaces/todus-lite
+   python3 enviar.py --url 'https://youtube.com/shorts/s1aE_t_iWhI' \
+     --to 58548838 --from 58799457 --delay 3 --retries 5 --ack-timeout 20
+   ```
+   o, si ya está descargado, `--file descargas/<nombre>.mp4`.
+4. Comparar SHA-256 en ambos lados. En la prueba real:
+   - descargado: `3a0b1f6675506db90d200f0febd5477950678cb7c246ba612988264ad2c12c9c`
+   - recibido: **el mismo**, en `/sdcard/Download/d46a11db6c2b9c55.mp4`
+   - tramas: **766/766**, 0 rechazadas.
+5. Si `auth.todus.cu` da timeouts, prefetch del JWT y `TODUS_TOKEN`:
+   ```bash
+   python3 - <<'PY'
+   from tds_lite.todus import fetch_token
+   open('/tmp/tds_token','w').write(fetch_token('5358799457', timeout=20, attempts=8))
+   PY
+   TODUS_TOKEN=$(cat /tmp/tds_token) python3 enviar.py --file ...
+   ```
 
 **Antes de descargar un vídeo real, pedir permiso al usuario** (regla suya).
 
 ---
 
-## 7. Evidencia de las pruebas (2026-11-08)
+## 7. Evidencia de las pruebas (2026-11-09)
 
-- **35 tests OK** (`Ran 35 tests in 0.547s`), tras los últimos cambios de red.
+- **45 tests OK** tras añadir `tests/test_download.py` y el soporte yt-dlp.
 - **Interop C++**: 214 tramas, 1 MiB, SHA
   `acdd86c760e689c00b2ca64a9c83acbcba1fc2a48027f84933ffbc2cd1e130a0`,
   RC=0.
@@ -253,7 +288,15 @@ estar ya escuchando; `--once` sale tras reconstruir.
   idéntico al receptor.
 - **JWT real**: 165 caracteres, prefijo `eyJhbGciOiJI...`.
 - **Bind real**: `5358799457@im.todus.cu/tds-lite-test`, cierre limpio.
-- Logs: `/tmp/tds_e2e/`.
+- **YouTube real (2026-11-09)**:
+  - URL: `https://youtube.com/shorts/s1aE_t_iWhI`
+  - yt-dlp `2026.10.26`, Deno `2.9.8`, yt-dlp-ejs `0.8.0`, 25 cookies de
+    `.youtube.com`.
+  - Descargado en el Codespace: 3.836.131 bytes, SHA
+    `3a0b1f6675506db90d200f0febd5477950678cb7c246ba612988264ad2c12c9c`.
+  - Enviado: job `d46a11db6c2b9c55`, **766/766** tramas, 0 rechazadas.
+  - Recibido en `/sdcard/Download/d46a11db6c2b9c55.mp4`, **SHA idéntico**.
+- Logs: `/tmp/tds_e2e/`, `/tmp/receptor_final.log`, `/tmp/sender.log`.
 
 Detalle en [`PRUEBAS.md`](PRUEBAS.md).
 
@@ -267,7 +310,9 @@ Detalle en [`PRUEBAS.md`](PRUEBAS.md).
 | El receptor debe arrancar antes que el emisor | Documentado; el emisor espera 5 s (`--start-delay`). No hay handshake. |
 | Pérdida de acuses → reintentos | El emisor reintenta la misma trama; el receptor tolera duplicados. |
 | La app Android de ToDus puede “robar” los mensajes | La presencia con prioridad 10 ayuda; si no, cerrar la app o usar otra cuenta. |
-| Enlaces HTML/YouTube | Rechazados; haría falta `yt-dlp` (pendiente opcional). |
+| Enlaces HTML/YouTube | Resuelto con `yt-dlp` + Deno/EJS + cookies. Si YouTube cambia el reto `n`, actualizar `yt-dlp`/EJS. |
+| Cookies de YouTube caducadas | Renovar `~/.config/tds/cookies.txt` y el secreto `TDS_COOKIES_B64`. |
+| `auth.todus.cu` con timeouts desde Codespace | Prefetch del JWT y `TODUS_TOKEN`; el envío en sí funcionó. |
 | Sin reanudación persistente | Si el emisor muere, hay que reenviar desde el principio. El receptor tolera duplicados. |
 | El test del receptor imprime en stdout | Cosmético; se puede capturar con `contextlib.redirect_stdout` si molesta. |
 | `docs/PRUEBAS.md` tenía un SHA fijo del interop | Corregido: ahora aclara que es aleatorio por ejecución. |
@@ -276,18 +321,19 @@ Detalle en [`PRUEBAS.md`](PRUEBAS.md).
 
 ## 9. Pendientes priorizados
 
-1. **Prueba definitiva en el teléfono** (requiere al usuario). Es lo único
-   que falta para validar el caso real.
-2. **Vídeo real de 1-5 MiB** por ToDus (con permiso del usuario para
-   descargarlo). Medir tiempo y tasa.
-3. Revisar el README con el usuario (nombres de carpetas, números, licencia).
-4. (Opcional) `yt-dlp` para enlaces de YouTube/TikTok, con permiso explícito
-   para instalar/descargar.
-5. (Opcional) Reanudación: guardar tramas/estado en disco para no reenviar
-   todo si se corta.
-6. (Opcional) `git init`, `.gitignore` ya existe, y push a un repo del
-   usuario (solo si lo pide).
-7. (Opcional) Empaquetar para Termux (script de instalación, instrucciones).
+1. **Revocar el token temporal de GitHub** que el usuario pegó en el chat.
+   No está en el repo, pero tiene scopes amplios (`repo`, `codespace`).
+2. **Parar/eliminar el Codespace** si no se va a usar, para no gastar cuota.
+   (Los secretos y el repo permanecen.)
+3. Decidir si se conserva el secreto `TDS_COOKIES_B64` o se rota/elimina.
+4. (Opcional) Probar un vídeo de 5-25 MiB y medir tiempo/tasa.
+5. (Opcional) Probar TikTok/Instagram/Facebook; puede requerir cookies
+   adicionales.
+6. (Opcional) Reanudación: guardar estado en disco para no reenviar todo.
+7. (Opcional) Empaquetar para Termux.
+8. (Opcional) Fallback a `curl` si `urllib` vuelve a dar timeouts con ToDus.
+9. (Opcional) Renombrar el vídeo recibido a un nombre legible
+   (`Merab_Dvalishvilli_vs_Sean_Omalley.mp4`).
 
 ---
 
@@ -314,6 +360,13 @@ Detalle en [`PRUEBAS.md`](PRUEBAS.md).
 14. README, USO, PROTOCOLO, PRUEBAS y CONTINUIDAD escritos.
 15. README corregido (`cd to dus-lite` → `cd todus-lite`).
 16. Re-ejecución final: 35 tests OK, interop 214 tramas OK, compileall OK.
+17. Añadido soporte YouTube con `yt-dlp`, Deno/EJS y cookies; tests 45 OK.
+18. Creado repo privado `Michel30006/todus-lite`, Codespace con sshd y
+    secreto `TDS_COOKIES_B64` (25 cookies `.youtube.com`).
+19. Descargado el Short `s1aE_t_iWhI` en el Codespace (3,7 MiB).
+20. Primer envío con timeouts de `auth.todus.cu`; prefetch de JWT OK.
+21. **Prueba real completa**: 766/766 tramas, SHA idéntico en
+    `/sdcard/Download/d46a11db6c2b9c55.mp4`. Documentación actualizada.
 
 ---
 
@@ -321,10 +374,12 @@ Detalle en [`PRUEBAS.md`](PRUEBAS.md).
 
 1. Lee este archivo entero.
 2. Ejecuta las pruebas de §6.1 y §6.2 para confirmar que el estado sigue sano.
-3. Pregunta al usuario si quiere hacer ya la prueba en el teléfono (§6.5).
-4. No descargues vídeos ni instales nada sin su permiso.
-5. Si algo falla, revisa `/tmp/tds_e2e/`, `/tmp/tests.log` y
-   `/tmp/interop.log`; el código de red está en `tds_lite/todus.py`.
+3. La prueba real del teléfono **ya está hecha** (YouTube, 766 tramas).
+4. Recuerda al usuario **revocar el token temporal** y parar el Codespace.
+5. No descargues vídeos ni instales nada sin su permiso.
+6. Si algo falla, revisa `/tmp/tds_e2e/`, `/tmp/receptor_final.log`,
+   `/tmp/sender.log` y `/tmp/tests.log`; el código de red está en
+   `tds_lite/todus.py`.
 6. Mantén el estilo: español, respuestas cortas, sin dependencias externas
    salvo autorización.
 
