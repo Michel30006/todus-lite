@@ -278,6 +278,13 @@ def _download_with_ytdlp(
         options["cookiefile"] = str(Path(cookies).expanduser())
     if cookies_from_browser:
         options["cookiesfrombrowser"] = (cookies_from_browser,)
+    deno = shutil.which("deno")
+    if not deno:
+        candidate = Path.home() / ".deno" / "bin" / "deno"
+        if candidate.is_file():
+            deno = str(candidate)
+    if deno:
+        options["js_runtimes"] = {"deno": {"path": deno}}
     if show_progress:
         last = {"time": 0.0}
 
