@@ -96,6 +96,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help=f"numero emisor ToDus (def. {DEFAULT_SENDER} o $TODUS_SENDER)",
     )
     parser.add_argument(
+        "--token",
+        help="JWT ya obtenido (def. $TODUS_TOKEN; si falta se pide a ToDus)",
+    )
+    parser.add_argument(
         "--max-mib",
         type=float,
         help="limite de descarga en MiB (def. 25 o $MAX_VIDEO_BYTES)",
@@ -225,6 +229,7 @@ def send_frames(
     )
     client = XmppClient(
         username=sender_user,
+        token=args.token or os.environ.get("TODUS_TOKEN") or None,
         resource=args.resource,
         verify_tls=not args.insecure_tls,
         auth_url=os.environ.get("TODUS_AUTH_URL", AUTH_URL),
