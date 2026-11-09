@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+descargas/
+recibidos/
+*.part
+.env
+.secrets/
+cookies*.txt
+juj*
+*.log
+.DS_Store
