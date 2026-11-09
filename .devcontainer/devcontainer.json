@@ -1,6 +1,11 @@
 {
   "name": "todus-lite",
   "image": "mcr.microsoft.com/devcontainers/python:3.12",
+  "features": {
+    "ghcr.io/devcontainers/features/sshd:1": {
+      "version": "latest"
+    }
+  },
   "postCreateCommand": "bash .devcontainer/setup.sh && python3 -m pip install --user -U yt-dlp && (command -v ffmpeg >/dev/null || (sudo apt-get update && sudo apt-get install -y ffmpeg))",
   "postStartCommand": "bash .devcontainer/setup.sh"
 }
