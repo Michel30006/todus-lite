@@ -255,9 +255,13 @@ def _download_with_ytdlp(
     outtmpl = str(dest / f"{stamp}_%(title).80s_%(id)s.%(ext)s")
     ffmpeg = shutil.which("ffmpeg") is not None
     if ffmpeg:
-        fmt = "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/b"
+        fmt = (
+            "bv*[ext=mp4][height<=480]+ba[ext=m4a]"
+            "/b[ext=mp4][height<=480]"
+            "/bv*[height<=480]+ba/b[height<=480]/b"
+        )
     else:
-        fmt = "best[ext=mp4][acodec!=none][vcodec!=none]/best[ext=mp4]/best"
+        fmt = "b[ext=mp4][height<=480]/b[height<=480]/b"
 
     options: dict = {
         "outtmpl": outtmpl,
