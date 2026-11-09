@@ -62,6 +62,7 @@ Idioma de trabajo: **español**. Estilo: directo, sin rodeos.
 | `/root/todus-lite/enviar.py` | Emisor interactivo. |
 | `/root/todus-lite/receptor.py` | Receptor interactivo en Python. |
 | `/root/todus-lite/receptor.sh` | Lanzador: pregunta número, normaliza 53, elige C++ o Python. |
+| `/root/todus-lite/descargar` | Comando Termux: pide URL + número, arranca receptor, conecta al Codespace y envía. |
 | `/root/todus-lite/tds_lite/table_v1.py` | Tabla v1 exacta + tablas de traducción. |
 | `/root/todus-lite/tds_lite/protocol.py` | Núcleo: codificación, tramas, CRC, reensamblado, JID. |
 | `/root/todus-lite/tds_lite/todus.py` | JWT, protobuf de auth, cliente XMPP, reintentos/DNS. |
@@ -99,6 +100,8 @@ Idioma de trabajo: **español**. Estilo: directo, sin rodeos.
 - [x] Emisor interactivo con `--file`, `--url`, `--to`, `--from`, `--token`,
       `--cookies`, `--cookies-from-browser`, `--dry-run`, `--max-mib`,
       `--send-delay-ms`, `--insecure-tls`.
+- [x] Comando `descargar` para Termux: URL + número, receptor local automático,
+      `gh codespace ssh`, `--remoto` y comprobación de sesión/scope.
 - [x] Receptor interactivo con `--number`, `--out`, `--once`, `--verbose`,
       escritura atómica y SHA-256.
 - [x] `receptor.sh` con prompt, normalización y selección C++/Python.
@@ -272,6 +275,36 @@ estar ya escuchando; `--once` sale tras reconstruir.
 
 **Antes de descargar un vídeo real, pedir permiso al usuario** (regla suya).
 
+### 6.6 Comando `descargar` (Termux, automatización)
+
+Instalación (una vez):
+
+```bash
+ln -sf /root/todus-lite/descargar /usr/local/bin/descargar
+gh auth login -h github.com
+gh auth refresh -h github.com -s codespace
+```
+
+Uso:
+
+```bash
+descargar            # pide URL y número; arranca receptor local
+descargar --remoto   # el receptor está en otro teléfono
+```
+
+Qué hace: pide URL, pide número, arranca `receptor.py --once`, espera `LISTO`,
+comprueba `gh codespace list`, conecta por SSH (arranca el Codespace si está
+parado), pre-obtiene JWT, descarga con `yt-dlp`/cookies y envía. Al final
+muestra el log del receptor y la ruta del fichero.
+
+- Comprueba la sesión con `gh codespace list`, **no** con `gh auth status`
+  (esta última devuelve 0 aunque el token sea inválido).
+- Si hay un receptor local con otro número, se niega a enviar.
+- El receptor local se arranca por defecto; si el destino es otro teléfono,
+  usar `--remoto`.
+- Autenticación no interactiva opcional:
+  `~/.config/todus-lite/gh_token` (600) con un PAT que tenga `codespace`.
+
 ---
 
 ## 7. Evidencia de las pruebas (2026-11-09)
@@ -334,6 +367,9 @@ Detalle en [`PRUEBAS.md`](PRUEBAS.md).
 8. (Opcional) Fallback a `curl` si `urllib` vuelve a dar timeouts con ToDus.
 9. (Opcional) Renombrar el vídeo recibido a un nombre legible
    (`Merab_Dvalishvilli_vs_Sean_Omalley.mp4`).
+10. **Probar `descargar` de extremo a extremo** cuando el usuario vuelva a
+    autenticar `gh` (el script ya pasó sintaxis, fallo de auth y generación del
+    comando remoto con un `gh` simulado).
 
 ---
 
@@ -367,6 +403,9 @@ Detalle en [`PRUEBAS.md`](PRUEBAS.md).
 20. Primer envío con timeouts de `auth.todus.cu`; prefetch de JWT OK.
 21. **Prueba real completa**: 766/766 tramas, SHA idéntico en
     `/sdcard/Download/d46a11db6c2b9c55.mp4`. Documentación actualizada.
+22. Añadido el comando `descargar` (Termux): URL + número, receptor local,
+    `gh codespace ssh`, `--remoto`, comprobación con `gh codespace list` y
+    tests offline con `gh` simulado. Pendiente prueba real tras reautenticar.
 
 ---
 

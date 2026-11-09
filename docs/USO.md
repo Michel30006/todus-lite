@@ -19,12 +19,54 @@ python3 receptor.py                     python3 enviar.py
 El receptor se queda esperando ficheros nuevos. El emisor termina cuando ha
 enviado y recibido el acuse de todas las tramas.
 
+## 0.1 Comando rápido `descargar` (Termux)
+
+La forma más simple. En el teléfono, una sola vez:
+
+```bash
+ln -sf /root/todus-lite/descargar /usr/local/bin/descargar
+gh auth login -h github.com
+gh auth refresh -h github.com -s codespace
+```
+
+Después:
+
+```bash
+descargar
+```
+
+El comando:
+
+1. Pide la **URL del vídeo**.
+2. Pide el **número destino** (8 dígitos; el 53 es automático).
+3. Arranca el receptor local con ese número y espera a `LISTO`.
+4. Conecta al Codespace (lo arranca si está parado).
+5. Descarga el vídeo con `yt-dlp`/cookies y lo envía por ToDus.
+6. Espera a que el receptor escriba el fichero y muestra el SHA-256.
+
+El vídeo queda en `/sdcard/Download`.
+
+- Por defecto el teléfono que ejecuta `descargar` es el receptor. Si envías a
+  **otro teléfono**, usa `descargar --remoto`; el otro teléfono debe tener el
+  receptor abierto.
+- Si ya hay un receptor con otro número, el script avisa y no envía.
+- `--remoto` evita arrancar el receptor local.
+- Variables: `TDS_CODESPACE`, `TODUS_SENDER`, `TDS_MAX_MIB`, `TDS_OUT_DIR`.
+- Autenticación no interactiva opcional:
+  ```bash
+  mkdir -p ~/.config/todus-lite
+  printf '%s' 'ghp_TU_TOKEN' > ~/.config/todus-lite/gh_token
+  chmod 600 ~/.config/todus-lite/gh_token
+  ```
+  El token necesita permiso de **Codespaces** (y `repo` si el repo es privado).
+
 ## 1. Requisitos
 
 - Python 3.10 o superior (probado con 3.14).
 - Conexión a Internet que permita salir a `auth.todus.cu` y `im.todus.cu:5222`.
 - No hace falta `pip install`: todo usa la biblioteca estándar.
 - En el teléfono (Termux): `pkg install python` si no está instalado.
+- `gh` (GitHub CLI) autenticado para el comando `descargar` y el Codespace.
 
 ## 2. Preparar el receptor en el teléfono
 
@@ -247,6 +289,9 @@ el emisor la reintenta; el receptor tolera duplicados.
 | `auth/token no accesible: timed out` | Red intermitente (también pasa en Codespace). Reintenta; si persiste, obtén un JWT aparte y pásalo con `TODUS_TOKEN`. |
 | YouTube solo devuelve imágenes / `n challenge` | Falta Deno o EJS. Ejecuta `.devcontainer/setup.sh` y comprueba `~/.config/yt-dlp/config`. |
 | `Sign in to confirm you're not a bot` | Cookies caducadas o ausentes. Renueva `~/.config/tds/cookies.txt`. |
+| `No hay sesion valida de GitHub...` | Ejecuta una vez `gh auth login -h github.com` y `gh auth refresh -h github.com -s codespace`. |
+| `No encuentro el Codespace ...` | Revisa `gh codespace list` y ajusta `TDS_CODESPACE` si cambió el nombre. |
+| `Ya hay un receptor local con el numero ...` | Cierra el receptor anterior (`pkill -f receptor.py`) o usa `descargar --remoto`. |
 | `Requested format is not available` | El selector de formato no encontró vídeo; actualiza `yt-dlp` y revisa las cookies. |
 | El receptor no recibe nada | Se lanzó el emisor antes que el receptor. Reinicia el emisor después de ver `LISTO`. |
 | El receptor no recibe y la app ToDus sí | La app Android puede estar conectada a la misma cuenta. Ciérrala o usa otra cuenta/recurso. |

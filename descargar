@@ -1,0 +1,202 @@
+#!/usr/bin/env bash
+set -u
+
+CS_NAME="${TDS_CODESPACE:-todus-lite-4q6p9jqxv9rxfqpp9}"
+FROM="${TODUS_SENDER:-58799457}"
+MAX_MIB="${TDS_MAX_MIB:-25}"
+REMOTE_DIR="/workspaces/todus-lite"
+OUT_DIR="${TDS_OUT_DIR:-/sdcard/Download}"
+REMOTE_RECEIVER=0
+
+usage() {
+  cat <<'EOF'
+Uso: descargar [--remoto]
+
+Pide una URL y un numero, arranca el receptor local (salvo --remoto),
+se conecta al Codespace y envia el video por ToDus.
+
+  --remoto, -r   No arrancar receptor local; el telefono destino ya lo tiene.
+  -h, --help     Esta ayuda.
+
+Variables:
+  TDS_CODESPACE  nombre del Codespace
+  TODUS_SENDER   numero emisor (def. 58799457)
+  TDS_MAX_MIB    limite de descarga en MiB (def. 25)
+  TDS_OUT_DIR    salida del receptor (def. /sdcard/Download)
+  GH_TOKEN       token de GitHub (si no, usa la sesion de gh)
+
+Primera vez:
+  gh auth login -h github.com
+  gh auth refresh -h github.com -s codespace
+EOF
+}
+
+case "${1:-}" in
+  -h|--help) usage; exit 0 ;;
+  -r|--remoto|--no-receptor) REMOTE_RECEIVER=1 ;;
+  "") ;;
+  *) echo "Opcion desconocida: $1"; usage; exit 2 ;;
+esac
+
+case "$FROM" in
+  *[!0-9]*|"") echo "TODUS_SENDER invalido: $FROM"; exit 1 ;;
+esac
+case "$MAX_MIB" in
+  *[!0-9]*|"") echo "TDS_MAX_MIB invalido: $MAX_MIB"; exit 1 ;;
+esac
+
+SCRIPT_PATH=$(readlink -f "$0")
+LOCAL_DIR=$(cd "$(dirname "$SCRIPT_PATH")" && pwd)
+[ -f "$LOCAL_DIR/receptor.py" ] || {
+  echo "No encuentro $LOCAL_DIR/receptor.py"
+  exit 1
+}
+
+printf 'URL del video: '
+read -r URL
+[ -n "$URL" ] || { echo 'URL vacia.'; exit 1; }
+
+printf 'Numero de telefono destino (8 digitos o JID): '
+read -r NUM
+[ -n "$NUM" ] || { echo 'Numero vacio.'; exit 1; }
+
+NUM=${NUM// /}
+NUM=${NUM#+}
+[ -n "$NUM" ] || { echo 'Numero invalido.'; exit 1; }
+
+TOKEN_FILE="${TDS_GH_TOKEN_FILE:-$HOME/.config/todus-lite/gh_token}"
+if [ -z "${GH_TOKEN:-}" ] && [ -s "$TOKEN_FILE" ]; then
+  GH_TOKEN=$(cat "$TOKEN_FILE")
+  export GH_TOKEN
+fi
+
+if ! command -v gh >/dev/null 2>&1; then
+  echo 'Falta el comando gh (GitHub CLI).'
+  echo 'Instalalo y ejecuta: gh auth login -h github.com'
+  exit 1
+fi
+
+echo 'Comprobando sesion de GitHub...'
+if ! CS_LIST=$(gh codespace list --json name 2>/tmp/todus_gh.err); then
+  echo 'No hay sesion valida de GitHub o falta el permiso "codespace".'
+  echo 'Ejecuta una vez:'
+  echo '  gh auth login -h github.com'
+  echo '  gh auth refresh -h github.com -s codespace'
+  tail -n 3 /tmp/todus_gh.err 2>/dev/null
+  exit 1
+fi
+case "$CS_LIST" in
+  *"\"$CS_NAME\""*) ;;
+  *)
+    echo "No encuentro el Codespace '$CS_NAME'."
+    echo 'Comprueba: gh codespace list'
+    exit 1
+    ;;
+esac
+
+RECV_PID=""
+RECV_LOG=""
+
+if [ "$REMOTE_RECEIVER" -eq 0 ]; then
+  EXISTING=$(pgrep -af '[r]eceptor.py' 2>/dev/null | head -n1 || true)
+  if [ -n "$EXISTING" ]; then
+    EXISTING_NUM=$(printf '%s\n' "$EXISTING" | sed -n 's/.*--number[ =]\([^ ]*\).*/\1/p')
+    if [ -n "$EXISTING_NUM" ] && [ "$EXISTING_NUM" != "$NUM" ]; then
+      echo "Ya hay un receptor local con el numero $EXISTING_NUM."
+      echo "Cierralo con: pkill -f receptor.py"
+      echo "O usa: descargar --remoto"
+      exit 1
+    fi
+    echo 'Ya hay un receptor local en marcha; lo reutilizo.'
+  else
+    mkdir -p "$OUT_DIR" 2>/dev/null || true
+    RECV_LOG="/tmp/todus_receptor_$(date +%Y%m%d_%H%M%S).log"
+    (
+      cd "$LOCAL_DIR" || exit 1
+      nohup python3 -u receptor.py --number "$NUM" --out "$OUT_DIR" --once \
+        >"$RECV_LOG" 2>&1 &
+      echo $! >/tmp/todus_receptor.pid
+    )
+    RECV_PID=$(cat /tmp/todus_receptor.pid 2>/dev/null || true)
+    echo "Receptor local arrancado (PID ${RECV_PID:-?}). Esperando conexion..."
+    READY=0
+    for _ in $(seq 1 90); do
+      if grep -q 'LISTO. Esperando tramas TDS1' "$RECV_LOG" 2>/dev/null; then
+        READY=1
+        break
+      fi
+      if [ -n "$RECV_PID" ] && ! kill -0 "$RECV_PID" 2>/dev/null; then
+        echo 'El receptor termino antes de conectar:'
+        tail -n 20 "$RECV_LOG" 2>/dev/null
+        exit 1
+      fi
+      sleep 1
+    done
+    if [ "$READY" -ne 1 ]; then
+      echo 'El receptor no llego a LISTO en 90 s:'
+      tail -n 20 "$RECV_LOG" 2>/dev/null
+      [ -n "$RECV_PID" ] && kill "$RECV_PID" 2>/dev/null
+      exit 1
+    fi
+    echo 'Receptor local listo.'
+  fi
+else
+  echo 'Modo remoto: no arranco receptor local.'
+fi
+
+B64_URL=$(printf '%s' "$URL" | base64 | tr -d '\n')
+B64_NUM=$(printf '%s' "$NUM" | base64 | tr -d '\n')
+
+REMOTE_SCRIPT=$(cat <<EOF
+set -u
+cd '$REMOTE_DIR' || exit 1
+URL=\$(printf '%s' '$B64_URL' | base64 -d)
+NUM=\$(printf '%s' '$B64_NUM' | base64 -d)
+echo "Obteniendo token de ToDus..."
+TOKEN=\$(python3 -c 'from tds_lite.todus import fetch_token; print(fetch_token("$FROM", timeout=15, attempts=4))' 2>/dev/null || true)
+if [ -n "\$TOKEN" ]; then export TODUS_TOKEN="\$TOKEN"; fi
+echo "Enviando \$URL -> \$NUM ..."
+exec python3 -u enviar.py --url "\$URL" --to "\$NUM" --from "$FROM" --max-mib "$MAX_MIB" --delay 3 --retries 5 --ack-timeout 20
+EOF
+)
+B64_SCRIPT=$(printf '%s' "$REMOTE_SCRIPT" | base64 | tr -d '\n')
+
+echo 'Conectando al Codespace (si esta parado, puede tardar)...'
+gh codespace ssh -c "$CS_NAME" -- "printf '%s' '$B64_SCRIPT' | base64 -d | bash -s"
+SEND_RC=$?
+
+if [ "$SEND_RC" -ne 0 ]; then
+  echo "El envio fallo (codigo $SEND_RC)."
+  echo 'Si el error menciona permisos o scope:'
+  echo '  gh auth refresh -h github.com -s codespace'
+fi
+
+if [ -n "$RECV_PID" ]; then
+  if [ "$SEND_RC" -ne 0 ]; then
+    kill "$RECV_PID" 2>/dev/null
+  else
+    echo 'Esperando a que el receptor termine de escribir...'
+    for _ in $(seq 1 120); do
+      kill -0 "$RECV_PID" 2>/dev/null || break
+      sleep 1
+    done
+    if kill -0 "$RECV_PID" 2>/dev/null; then
+      echo 'El receptor sigue esperando; lo detengo.'
+      kill "$RECV_PID" 2>/dev/null
+    fi
+  fi
+  echo '--- Receptor ---'
+  tail -n 25 "$RECV_LOG" 2>/dev/null
+  FINAL_PATH=$(sed -n 's/^  fichero: //p' "$RECV_LOG" 2>/dev/null | tail -n1)
+  [ -n "$FINAL_PATH" ] && echo "Archivo: $FINAL_PATH"
+elif [ "$REMOTE_RECEIVER" -eq 0 ]; then
+  echo 'El receptor ya estaba en marcha; revisa su log.'
+else
+  echo 'Revisa el telefono destino: el archivo estara en /sdcard/Download.'
+fi
+
+if [ "$SEND_RC" -eq 0 ]; then
+  echo 'Listo.'
+else
+  exit "$SEND_RC"
+fi

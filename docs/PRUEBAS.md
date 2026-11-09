@@ -93,6 +93,22 @@ de DNS; por eso el código ahora reintenta y cachea la IP.)
 - Resultado: **OK**. Es la prueba real completa: YouTube → Codespace →
   codificación → ToDus → teléfono → MP4 reproducible.
 
+### 3.3c Comando `descargar` (offline)
+
+No se probó el envío real con este comando porque requiere volver a
+autenticar `gh`. Sí se probó:
+
+- `bash -n descargar` → sintaxis OK.
+- Sin sesión de GitHub: pide URL y número, detecta el fallo con
+  `gh codespace list` y sale **sin** arrancar el receptor.
+- Con un `gh` simulado: genera el script remoto, lo codifica en base64 y el
+  script remoto conserva la URL con `?`/`&` y el número. Se verificó el
+  contenido decodificado.
+- La lógica del receptor (`receptor.py --once`) ya está probada en 3.2/3.3.
+
+Pendiente: ejecución real completa tras `gh auth login` y
+`gh auth refresh -h github.com -s codespace`.
+
 ### 3.4 Fichero de 64 KiB (14 tramas)
 
 - Emisor: `5358799457` (`tds-lite-sender`).

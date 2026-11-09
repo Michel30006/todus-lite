@@ -126,6 +126,40 @@ Formato: fichero de cookies **Netscape** exportado del navegador
 `.youtube.com` (`SID`, `HSID`, `SSID`, `APISID`, `SAPISID`, `LOGIN_INFO`,
 `__Secure-*`).
 
+## Comando rápido en Termux: `descargar`
+
+El repo incluye el ejecutable `descargar`. Instálalo una vez en el `PATH`:
+
+```bash
+ln -sf /root/todus-lite/descargar /usr/local/bin/descargar
+```
+
+La primera vez hay que autenticar GitHub (solo una vez):
+
+```bash
+gh auth login -h github.com
+gh auth refresh -h github.com -s codespace
+```
+
+Después basta con:
+
+```bash
+descargar
+```
+
+Pide **URL** y **número destino**, arranca el receptor local, conecta al
+Codespace (lo arranca si está parado), descarga el vídeo con las cookies y lo
+envía. El fichero aparece en `/sdcard/Download`.
+
+- Por defecto asume que el teléfono que ejecuta `descargar` es el receptor y
+  arranca `receptor.py` con el número indicado.
+- Si envías a **otro teléfono**, ejecuta `descargar --remoto`; ese teléfono
+  debe tener el receptor ya escuchando.
+- Variables: `TDS_CODESPACE`, `TODUS_SENDER`, `TDS_MAX_MIB`, `TDS_OUT_DIR`.
+- Si `gh` no tiene sesión, el script lo dice y no envía nada.
+- Opcional: guarda un PAT en `~/.config/todus-lite/gh_token` (permisos `600`)
+  para autenticación no interactiva.
+
 ## Límites y tiempos
 
 - Máximo por defecto: **25 MiB** (`MAX_VIDEO_BYTES`).
@@ -142,6 +176,7 @@ Formato: fichero de cookies **Netscape** exportado del navegador
 ```text
 todus-lite/
 ├── enviar.py              # emisor interactivo (Codespace)
+├── descargar              # comando rápido Termux: URL + número -> envía
 ├── receptor.py            # receptor interactivo (teléfono / Linux)
 ├── receptor.sh            # lanzador que pregunta número y usa C++ o Python
 ├── .devcontainer/         # Codespace: sshd, Deno/EJS, yt-dlp y cookies
