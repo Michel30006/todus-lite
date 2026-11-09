@@ -257,11 +257,18 @@ def _download_with_ytdlp(
     if ffmpeg:
         fmt = (
             "bv*[ext=mp4][height<=480]+ba[ext=m4a]"
-            "/b[ext=mp4][height<=480]"
-            "/bv*[height<=480]+ba/b[height<=480]/b"
+            "/b[ext=mp4][height<=480][vcodec!=none]"
+            "/bv*[height<=480]+ba"
+            "/b[height<=480][vcodec!=none]"
+            "/bv*[vcodec!=none]+ba"
+            "/b[vcodec!=none]"
         )
     else:
-        fmt = "b[ext=mp4][height<=480]/b[height<=480]/b"
+        fmt = (
+            "b[ext=mp4][height<=480][vcodec!=none]"
+            "/b[height<=480][vcodec!=none]"
+            "/b[vcodec!=none]"
+        )
 
     options: dict = {
         "outtmpl": outtmpl,
