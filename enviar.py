@@ -43,7 +43,7 @@ from tds_lite.todus import AUTH_URL, TodusError, XmppClient
 
 DEFAULT_RECIPIENT = "58548838"
 DEFAULT_SENDER = "58799457"
-DEFAULT_MAX_BYTES = 25 * 1024 * 1024
+DEFAULT_MAX_BYTES: int | None = None
 DEFAULT_SEND_DELAY_MS = 120
 DEFAULT_ACK_TIMEOUT = 15.0
 DEFAULT_RETRIES = 3
@@ -167,9 +167,9 @@ def resolve_source(args: argparse.Namespace) -> tuple[Path, int, str]:
         if not path.is_file():
             raise SystemExit(f"No existe el fichero: {path}")
         data = path.read_bytes()
-        if len(data) > max_bytes:
+        if max_bytes is not None and len(data) > max_bytes:
             raise SystemExit(
-                f"El fichero pesa {human_bytes(len(data))} y el limite es "
+                f"El fichero pesa {human_bytes(len(data))} y el límite es "
                 f"{human_bytes(max_bytes)}"
             )
         import hashlib

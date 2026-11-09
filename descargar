@@ -3,7 +3,7 @@ set -u
 
 CS_NAME="${TDS_CODESPACE:-todus-lite-4q6p9jqxv9rxfqpp9}"
 FROM="${TODUS_SENDER:-58799457}"
-MAX_MIB="${TDS_MAX_MIB:-25}"
+MAX_MIB="${TDS_MAX_MIB:-}"
 REMOTE_DIR="/workspaces/todus-lite"
 OUT_DIR="${TDS_OUT_DIR:-/sdcard/Download}"
 REMOTE_RECEIVER=0
@@ -21,7 +21,7 @@ se conecta al Codespace y envia el video por ToDus.
 Variables:
   TDS_CODESPACE  nombre del Codespace
   TODUS_SENDER   numero emisor (def. 58799457)
-  TDS_MAX_MIB    limite de descarga en MiB (def. 25)
+  TDS_MAX_MIB    limite de descarga en MiB (def. sin limite)
   TDS_OUT_DIR    salida del receptor (def. /sdcard/Download)
   GH_TOKEN       token de GitHub (si no, usa la sesion de gh)
 
@@ -42,7 +42,7 @@ case "$FROM" in
   *[!0-9]*|"") echo "TODUS_SENDER invalido: $FROM"; exit 1 ;;
 esac
 case "$MAX_MIB" in
-  *[!0-9]*|"") echo "TDS_MAX_MIB invalido: $MAX_MIB"; exit 1 ;;
+  *[!0-9]*) echo "TDS_MAX_MIB invalido: $MAX_MIB"; exit 1 ;;
 esac
 
 SCRIPT_PATH=$(readlink -f "$0")
@@ -156,14 +156,49 @@ echo "Obteniendo token de ToDus..."
 TOKEN=\$(python3 -c 'from tds_lite.todus import fetch_token; print(fetch_token("$FROM", timeout=15, attempts=4))' 2>/dev/null || true)
 if [ -n "\$TOKEN" ]; then export TODUS_TOKEN="\$TOKEN"; fi
 echo "Enviando \$URL -> \$NUM ..."
-exec python3 -u enviar.py --url "\$URL" --to "\$NUM" --from "$FROM" --max-mib "$MAX_MIB" --delay 3 --retries 5 --ack-timeout 20
+if [ -n "$MAX_MIB" ]; then
+  exec python3 -u enviar.py --url "\$URL" --to "\$NUM" --from "$FROM" --max-mib "$MAX_MIB" --delay 3 --retries 5 --ack-timeout 20
+else
+  exec python3 -u enviar.py --url "\$URL" --to "\$NUM" --from "$FROM" --delay 3 --retries 5 --ack-timeout 20
+fi
 EOF
 )
 B64_SCRIPT=$(printf '%s' "$REMOTE_SCRIPT" | base64 | tr -d '\n')
 
-echo 'Conectando al Codespace (si esta parado, puede tardar)...'
-gh codespace ssh -c "$CS_NAME" -- "printf '%s' '$B64_SCRIPT' | base64 -d | bash -s"
-SEND_RC=$?
+SEND_LOG="/tmp/todus_send_$(date +%Y%m%d_%H%M%S).log"
+SEND_RC=1
+ATTEMPT=1
+while [ "$ATTEMPT" -le 5 ]; do
+  echo "Conectando al Codespace (intento $ATTEMPT/5; si esta parado, puede tardar)..."
+  set -o pipefail
+  gh codespace ssh -c "$CS_NAME" -- "printf '%s' '$B64_SCRIPT' | base64 -d | bash -s" 2>&1 | tee -a "$SEND_LOG"
+  SEND_RC=${PIPESTATUS[0]}
+  set +o pipefail
+  if [ "$SEND_RC" -eq 0 ]; then
+    break
+  fi
+  if [ -n "$RECV_LOG" ]; then
+    for _ in $(seq 1 12); do
+      if grep -q 'ARCHIVO RECIBIDO' "$RECV_LOG" 2>/dev/null; then
+        SEND_RC=0
+        break
+      fi
+      sleep 1
+    done
+    [ "$SEND_RC" -eq 0 ] && break
+  fi
+  if [ "$ATTEMPT" -ge 5 ]; then
+    break
+  fi
+  if grep -qiE 'context deadline exceeded|failed to connect|connection reset|i/o timeout|temporarily unavailable|502|503|broken pipe' "$SEND_LOG" 2>/dev/null; then
+    echo 'Fallo transitorio de SSH; reintentando en 15 s...'
+    ATTEMPT=$((ATTEMPT + 1))
+    sleep 15
+    continue
+  fi
+  break
+done
+echo "Log del emisor: $SEND_LOG"
 
 if [ "$SEND_RC" -ne 0 ]; then
   echo "El envio fallo (codigo $SEND_RC)."

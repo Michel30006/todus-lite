@@ -46,7 +46,7 @@ def _guess_name(url: str) -> str:
 def download(
     url: str,
     dest_dir: str | Path,
-    max_bytes: int = 25 * 1024 * 1024,
+    max_bytes: int | None = None,
     timeout: float = 60.0,
     show_progress: bool = True,
 ) -> tuple[Path, int, str]:
@@ -94,7 +94,7 @@ def download(
                 )
             length_header = response.headers.get("Content-Length")
             length = int(length_header) if length_header and length_header.isdigit() else 0
-            if length > max_bytes:
+            if max_bytes is not None and length > max_bytes:
                 raise DownloadError(
                     f"el fichero pesa {human_bytes(length)} y el limite es "
                     f"{human_bytes(max_bytes)} (ajusta MAX_VIDEO_BYTES)"
@@ -106,9 +106,9 @@ def download(
                     if not chunk:
                         break
                     written += len(chunk)
-                    if written > max_bytes:
+                    if max_bytes is not None and written > max_bytes:
                         raise DownloadError(
-                            f"la descarga supera el limite de "
+                            f"la descarga supera el límite de "
                             f"{human_bytes(max_bytes)}"
                         )
                     out.write(chunk)
@@ -235,7 +235,7 @@ def _cleanup_stamp(dest: Path, stamp: str) -> None:
 def _download_with_ytdlp(
     url: str,
     dest_dir: str | Path,
-    max_bytes: int,
+    max_bytes: int | None = None,
     cookies: str | Path | None = None,
     cookies_from_browser: str | None = None,
     show_progress: bool = True,
@@ -277,7 +277,6 @@ def _download_with_ytdlp(
         "quiet": True,
         "no_warnings": True,
         "noprogress": True,
-        "max_filesize": max_bytes,
         "retries": 3,
         "fragment_retries": 3,
         "socket_timeout": 30,
@@ -285,6 +284,8 @@ def _download_with_ytdlp(
         "overwrites": True,
         "merge_output_format": "mp4",
     }
+    if max_bytes is not None:
+        options["max_filesize"] = max_bytes
     if cookies:
         options["cookiefile"] = str(Path(cookies).expanduser())
     if cookies_from_browser:
@@ -353,7 +354,7 @@ def _download_with_ytdlp(
     if size == 0:
         path.unlink(missing_ok=True)
         raise DownloadError("el video descargado esta vacio")
-    if size > max_bytes:
+    if max_bytes is not None and size > max_bytes:
         path.unlink(missing_ok=True)
         raise DownloadError(
             f"el video pesa {human_bytes(size)} y el limite es "
@@ -370,7 +371,7 @@ def _download_with_ytdlp(
 def download_media(
     url: str,
     dest_dir: str | Path,
-    max_bytes: int = 25 * 1024 * 1024,
+    max_bytes: int | None = None,
     timeout: float = 60.0,
     show_progress: bool = True,
     cookies: str | Path | None = None,
