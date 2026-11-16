@@ -1,5 +1,7 @@
 # Guía de uso
 
+> Estado actual, cuentas y evidencia: [`ESTADO.md`](ESTADO.md).
+
 ## 0. Resumen del flujo
 
 ```text
@@ -38,11 +40,17 @@ descargar
 El comando:
 
 1. Pide la **URL del vídeo**.
-2. Pide el **número destino** (8 dígitos; el 53 es automático).
-3. Arranca el receptor local con ese número y espera a `LISTO`.
-4. Conecta al Codespace (lo arranca si está parado).
-5. Descarga el vídeo con `yt-dlp`/cookies y lo envía por ToDus.
-6. Espera a que el receptor escriba el fichero y muestra el SHA-256.
+2. Pide la **calidad**: `360`, `480` o `720` (por defecto `480`).
+3. Pide el **número destino** (8 dígitos; el 53 es automático). No puede ser
+   el mismo que el emisor: el script lo rechaza antes de descargar.
+4. Arranca el receptor local con ese número y espera a `LISTO`.
+5. Conecta al Codespace (lo arranca si está parado) y sincroniza
+   `enviar.py` y `tds_lite/*.py`.
+6. Descarga el vídeo con `yt-dlp`/cookies y lo envía por ToDus.
+7. Espera a que el receptor escriba el fichero y compara el SHA-256.
+8. Borra el vídeo descargado del Codespace y lo para al terminar (aunque ya
+   estuviera encendido), salvo `--keep`; el vídeo se borra igualmente tras un
+   envío correcto.
 
 El vídeo queda en `/sdcard/Download`.
 
@@ -51,7 +59,28 @@ El vídeo queda en `/sdcard/Download`.
   receptor abierto.
 - Si ya hay un receptor con otro número, el script avisa y no envía.
 - `--remoto` evita arrancar el receptor local.
-- Variables: `TDS_CODESPACE`, `TODUS_SENDER`, `TDS_MAX_MIB`, `TDS_OUT_DIR`.
+- `--keep` deja el Codespace encendido al terminar; el vídeo del Codespace
+  se borra igualmente tras un envío correcto.
+- `--self` permite destino == emisor (solo pruebas; no recomendado).
+- Variables: `TDS_CODESPACE`, `TDS_REPO`, `TDS_BRANCH`, `TDS_MACHINE`,
+  `TODUS_SENDER`, `TDS_MAX_MIB` (opcional; vacío o `0` = sin límite),
+  `TDS_OUT_DIR`, `TDS_KEEP_CODESPACE`, `TDS_ALLOW_SELF`,
+  `TDS_STALL_SECONDS` (por defecto 300; cancela si el envío deja de avanzar;
+  `0` lo desactiva), `TDS_GH_TOKEN_DIR`, `TDS_GH_TOKEN_FILE`,
+  `TDS_COOKIES_FILE`, `TDS_REMOTE_DIR` (def. `/tmp/todus-lite`) y
+  `TDS_YTDLP_PLAYER_CLIENT` (fuerza el cliente de YouTube).
+- Tokens multi-cuenta: guarda cada PAT en
+  `~/.config/todus-lite/tokens/<cuenta>.token` (permisos `600`). `descargar`
+  prueba primero `GH_TOKEN`, luego esos ficheros y al final
+  `~/.config/todus-lite/gh_token`. Si una cuenta da HTTP 402
+  (facturación/cuota), pasa a la siguiente. Si no hay Codespace del repo,
+  reutiliza cualquier Codespace de la cuenta; solo crea uno si tiene acceso al
+  repo privado.
+- Cookies: usa `~/.config/todus-lite/cookies.txt` (o `/sdcard/Download/juj.txt`)
+  y las copia al Codespace; `.devcontainer/setup.sh` instala/verifica
+  yt-dlp, Deno, ffmpeg y la configuración de yt-dlp.
+- La calidad se aplica a páginas procesadas por `yt-dlp` (YouTube, TikTok...).
+  Un enlace directo a un `.mp4` se descarga tal cual.
 - Autenticación no interactiva opcional:
   ```bash
   mkdir -p ~/.config/todus-lite
@@ -59,6 +88,18 @@ El vídeo queda en `/sdcard/Download`.
   chmod 600 ~/.config/todus-lite/gh_token
   ```
   El token necesita permiso de **Codespaces** (y `repo` si el repo es privado).
+
+### Descargas interrumpidas
+
+Si se corta la conexión durante la descarga o el envío falla, vuelve a
+ejecutar el mismo comando (`descargar` o `python3 enviar.py --url ...`). El
+fichero `.part` se conserva en el Codespace (`descargas/`) y la descarga
+continúa desde el último byte; yt-dlp hace lo mismo con su directorio
+`.tds-ytdlp-*`. Tras un envío correcto, `descargar` borra `descargas/` del
+Codespace. Para empezar de cero, borra esos `.part` o `.tds-ytdlp-*`.
+
+El **envío** por ToDus no se reanuda: si se corta a mitad, hay que reiniciarlo
+(el receptor tolera duplicados).
 
 ## 1. Requisitos
 
@@ -175,6 +216,17 @@ python3 -m pip install --user -U "yt-dlp[default]"
 
 y renueva las cookies.
 
+Si el cliente web devuelve **HTTP 403** pero las cookies son válidas, el flujo
+reintenta automáticamente con el cliente **`web_embedded`**. Puedes forzarlo:
+
+```bash
+TDS_YTDLP_PLAYER_CLIENT=web_embedded python3 enviar.py --url ...
+```
+
+En el Codespace se probó que `web_embedded` descarga correctamente; `mweb`
+también puede dar 403 si falta un PO Token, y `tv` puede pedir recargar la
+página.
+
 ## 4. Cambiar el número del receptor
 
 No hay que tocar código:
@@ -219,7 +271,10 @@ python3 enviar.py --file video.mp4 --to 58548838
 # Solo descargar/codificar y ver el plan (no conecta a ToDus)
 python3 enviar.py --file video.mp4 --to 58548838 --dry-run
 
-# Limitar a 10 MiB
+# Elegir calidad maxima (360, 480 o 720; def. 480)
+python3 enviar.py --quality 720
+
+# Limite opcional; por defecto no hay limite
 python3 enviar.py --max-mib 10
 
 # Cambiar la pausa entre tramas (ms)
@@ -232,6 +287,9 @@ python3 enviar.py --token ...
 
 # Cookies de YouTube
 python3 enviar.py --cookies ~/.config/tds/cookies.txt
+
+# Borrar el vídeo descargado del Codespace tras enviarlo
+python3 enviar.py --delete-after-send
 
 # No verificar TLS (solo pruebas de laboratorio)
 python3 enviar.py --insecure-tls
@@ -279,7 +337,8 @@ pkill -f receptor.py
 | 25 MiB | ~5370 | ~15-25 min |
 
 El tiempo real depende del acuse de ToDus y de la red. Si se pierde una trama,
-el emisor la reintenta; el receptor tolera duplicados.
+el emisor la reintenta; el receptor tolera duplicados. Sin límite de tamaño,
+un 720p puede superar 100 MiB y tardar horas.
 
 ## 10. Problemas frecuentes
 
@@ -292,11 +351,15 @@ el emisor la reintenta; el receptor tolera duplicados.
 | `No hay sesion valida de GitHub...` | Ejecuta una vez `gh auth login -h github.com` y `gh auth refresh -h github.com -s codespace`. |
 | `No encuentro el Codespace ...` | Revisa `gh codespace list` y ajusta `TDS_CODESPACE` si cambió el nombre. |
 | `Ya hay un receptor local con el numero ...` | Cierra el receptor anterior (`pkill -f receptor.py`) o usa `descargar --remoto`. |
-| `Requested format is not available` | El selector de formato no encontró vídeo; actualiza `yt-dlp` y revisa las cookies. |
+| `Requested format is not available` | El selector de formato no encontró vídeo; actualiza `yt-dlp` y revisa las cookies. `descargar` reintenta con `web_embedded`. |
+| `HTTP Error 403: Forbidden` al descargar YouTube | Cookies válidas pero cliente web rechazado. Se reintenta con `web_embedded`; si persiste, renueva cookies o usa `TDS_YTDLP_PLAYER_CLIENT=web_embedded`. |
+| `HTTP 402` / `billing issue` / `currently disallowed` | La cuenta no tiene cuota/facturación de Codespaces. `descargar` prueba el siguiente token; revisa `https://github.com/settings/billing`. |
+| `error getting ssh server details: context deadline exceeded` | Fallo transitorio de SSH/Codespace. `descargar` reintenta; si sigue, usa otro Codespace o vuelve a ejecutar. |
+| El Codespace no se apaga | Debe apagarse siempre al terminar; comprueba que no usaste `--keep`/`TDS_KEEP_CODESPACE=1`. |
 | El receptor no recibe nada | Se lanzó el emisor antes que el receptor. Reinicia el emisor después de ver `LISTO`. |
 | El receptor no recibe y la app ToDus sí | La app Android puede estar conectada a la misma cuenta. Ciérrala o usa otra cuenta/recurso. |
 | `el enlace devolvio HTML` | No es un enlace directo. Usa la URL del fichero `.mp4`. |
-| `la descarga supera el limite` | Ajusta `MAX_VIDEO_BYTES` o `--max-mib`. |
+| `la descarga supera el limite` | Solo aparece si fijaste `MAX_VIDEO_BYTES`/`--max-mib`; quítalo para no tener límite. |
 | SHA-256 distinto | Revisa que el receptor muestre el mismo hash que el emisor; si no, repite el envío. |
 | `SASL PLAIN rechazado` | El JWT caducó o la cuenta ya no admite login solo con número. Vuelve a ejecutar (pide JWT nuevo). |
 | Se corta a mitad | El emisor reintenta tramas; si termina, vuelve a ejecutarlo desde el principio (el receptor tolera duplicados). |

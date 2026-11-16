@@ -13,6 +13,43 @@ estándar) y reutiliza el protocolo ya verificado del kkk:
 El emisor se ejecuta en el **GitHub Codespace** (o cualquier Linux con Python
 3.10+). El receptor se ejecuta en el **teléfono** (Termux) o en otro equipo.
 
+## Estado actual (2026-11-16)
+
+El proyecto está **funcional y probado de extremo a extremo**: YouTube →
+Codespace → ToDus → teléfono. Última prueba real: vídeo `YahWlZoKHkY` en
+**480p**, `29.536.718` bytes, `5990/5990` tramas, SHA-256 idéntico en
+`/sdcard/Download/95c6350cf2b98fe7.mp4`.
+
+- **55 pruebas offline OK**.
+- Multi-cuenta con fallback por HTTP 402, reutilización de Codespaces y
+  auto-arranque/auto-apagado.
+- YouTube con `yt-dlp` + Deno/EJS + cookies; si el cliente por defecto da
+  **403**, se reintenta con `web_embedded`.
+- Tras un envío correcto, `descargar` borra el vídeo del Codespace y apaga el
+  Codespace (salvo `--keep`).
+- Estado detallado, cuentas, Codespaces, evidencia y pendientes:
+  [`docs/ESTADO.md`](docs/ESTADO.md).
+
+## Funcionalidades actuales
+
+- **Protocolo v1 del kkk** reimplementado en Python puro: tabla de 256
+  símbolos, tramas `TDS1`, CRC-32, reensamblado tolerante a desorden y
+  duplicados.
+- **Receptor** Python y lanzador con binario C++ opcional; normalización
+  automática del `53`, escritura atómica y SHA-256.
+- **Descarga** HTTP reanudable y `yt-dlp` para YouTube/TikTok/Instagram/
+  Facebook/X/Vimeo, con calidades 360/480/720 y sin límite de tamaño por
+  defecto.
+- **Cookies Netscape** para YouTube, Deno + EJS y configuración persistente en
+  el Codespace.
+- **`descargar`** para Termux: URL + calidad + número, receptor local o
+  `--remoto`, multi-token, selección/creación/reutilización de Codespace,
+  sincronización de código, configuración remota, watchdog, comparación de
+  SHA, borrado del vídeo y apagado automático.
+- **`enviar.py`** interactivo o por argumentos, con `--file`, `--dry-run`,
+  `--delete-after-send` y JWT por `TODUS_TOKEN`/`--token`.
+- **Documentación** de uso, protocolo, pruebas, estado y continuidad.
+
 ## Inicio rápido
 
 ### 1. Receptor (en el teléfono, primero)
@@ -103,9 +140,9 @@ Se admiten:
   solver **EJS**; el `.devcontainer` del proyecto los instala solos.
 
 El emisor detecta si el enlace es una página y usa `yt-dlp`; si es un fichero
-directo, usa la descarga HTTP normal. Por defecto limita la calidad a **480p**
-para que el vídeo quepa en el límite de 25 MiB y se envíe en un tiempo
-razonable.
+directo, usa la descarga HTTP normal. En YouTube/TikTok/etc. la calidad se
+elige al descargar (**360p**, **480p** o **720p**) y **no hay límite de tamaño
+por defecto**; un 720p puede pesar mucho y tardar bastante en enviarse.
 
 ### Cookies de YouTube
 
@@ -116,10 +153,11 @@ Codespace. El emisor busca automáticamente:
 ~/.config/tds/cookies.txt
 ```
 
-o la ruta de `--cookies` / `TDS_COOKIES_FILE`. En el Codespace del proyecto
-estas cookies se restauran desde el secreto de Codespaces `TDS_COOKIES_B64`
-(definido en `.devcontainer/setup.sh`), así que sobreviven a reinicios y
-recreaciones. **No se guardan en el repositorio.**
+o la ruta de `--cookies` / `TDS_COOKIES_FILE`. `descargar` copia las cookies
+locales (`~/.config/todus-lite/cookies.txt`, o `/sdcard/Download/juj.txt`) a
+`~/.config/tds/cookies.txt` en el Codespace antes de descargar. El secreto
+antiguo `TDS_COOKIES_B64` ya no es necesario para el flujo actual. **No se
+guardan en el repositorio.**
 
 Formato: fichero de cookies **Netscape** exportado del navegador
 (por ejemplo, la extensión "Get cookies.txt LOCALLY"). Contiene cookies de
@@ -147,22 +185,46 @@ Después basta con:
 descargar
 ```
 
-Pide **URL** y **número destino**, arranca el receptor local, conecta al
-Codespace (lo arranca si está parado), descarga el vídeo con las cookies y lo
-envía. El fichero aparece en `/sdcard/Download`.
+Pide **URL**, **calidad** (360/480/720) y **número destino**, arranca el
+receptor local, conecta al Codespace (lo arranca si está parado y sincroniza
+`enviar.py` y `tds_lite/*.py`), descarga el vídeo con las cookies y lo envía.
+El fichero aparece en `/sdcard/Download`.
 
 - Por defecto asume que el teléfono que ejecuta `descargar` es el receptor y
   arranca `receptor.py` con el número indicado.
 - Si envías a **otro teléfono**, ejecuta `descargar --remoto`; ese teléfono
   debe tener el receptor ya escuchando.
-- Variables: `TDS_CODESPACE`, `TODUS_SENDER`, `TDS_MAX_MIB`, `TDS_OUT_DIR`.
+- El destino debe ser distinto del emisor (`TODUS_SENDER`); si coincide,
+  `descargar` se niega antes de descargar. `--self` lo permite solo para
+  pruebas.
+- Al terminar, borra el vídeo descargado del Codespace y lo **para** (aunque
+  ya estuviera encendido). Usa `--keep` (o `TDS_KEEP_CODESPACE=1`) para
+  dejarlo encendido; el vídeo se borra igualmente tras un envío correcto.
+- Variables: `TDS_CODESPACE`, `TODUS_SENDER`, `TDS_MAX_MIB` (opcional;
+  vacío o `0` = sin límite), `TDS_OUT_DIR`, `TDS_KEEP_CODESPACE`,
+  `TDS_ALLOW_SELF`, `TDS_STALL_SECONDS` (por defecto 300; cancela si el
+  envío deja de avanzar; `0` lo desactiva), `TDS_GH_TOKEN_DIR`,
+  `TDS_GH_TOKEN_FILE`, `TDS_COOKIES_FILE`, `TDS_REMOTE_DIR` (def.
+  `/tmp/todus-lite`), `TDS_YTDLP_PLAYER_CLIENT` (fuerza el cliente de YouTube,
+  por ejemplo `web_embedded`).
+- Tokens multi-cuenta: guarda cada PAT en
+  `~/.config/todus-lite/tokens/<cuenta>.token` (permisos `600`). `descargar`
+  prueba primero `GH_TOKEN`, luego esos ficheros y al final
+  `~/.config/todus-lite/gh_token`. Si una cuenta no tiene cuota/facturación
+  (HTTP 402), pasa a la siguiente. Si no hay Codespace del repo, reutiliza
+  cualquier Codespace de la cuenta; solo crea uno si la cuenta tiene acceso al
+  repo.
+- Cookies: usa `~/.config/todus-lite/cookies.txt` (o `/sdcard/Download/juj.txt`)
+  y las copia al Codespace; `.devcontainer/setup.sh` instala/verifica
+  yt-dlp, Deno, ffmpeg y la configuración de yt-dlp.
 - Si `gh` no tiene sesión, el script lo dice y no envía nada.
 - Opcional: guarda un PAT en `~/.config/todus-lite/gh_token` (permisos `600`)
   para autenticación no interactiva.
 
 ## Límites y tiempos
 
-- Máximo por defecto: **25 MiB** (`MAX_VIDEO_BYTES`).
+- Sin límite de tamaño por defecto. Límite opcional con `--max-mib` o
+  `MAX_VIDEO_BYTES` (`0` = sin límite).
 - Trama máxima: **8192 bytes UTF-8**.
 - Pausa entre tramas: **120 ms** (`SEND_DELAY_MS`).
 - La tabla v1 ocupa ~**1,66 bytes de texto por byte de vídeo**.
@@ -184,24 +246,26 @@ todus-lite/
 │   ├── table_v1.py        # tabla de codificación v1 (256 símbolos)
 │   ├── protocol.py        # codificación, tramas TDS1, reensamblado, JID
 │   ├── todus.py           # JWT + cliente XMPP ToDus (stdlib)
-│   └── download.py        # HTTP(S) + yt-dlp (YouTube...), límite y SHA-256
+│   └── download.py        # HTTP(S) + yt-dlp (YouTube...), calidad y SHA-256
 ├── tests/
 │   ├── test_protocol.py
 │   ├── test_todus_parse.py
 │   ├── test_receiver.py
-│   ├── test_download.py   # detección de URLs y validación de vídeo
-│   └── interop_kkk.py     # tramas Python -> receptor C++ del kkk
+│   ├── test_download.py      # URLs, calidades, reanudación y vídeo
+│   ├── test_descargar.py     # guardas, multi-token y apagado
+│   └── interop_kkk.py        # tramas Python -> receptor C++ del kkk
 └── docs/
+    ├── ESTADO.md             # estado actual, cuentas y evidencia
     ├── USO.md
     ├── PROTOCOLO.md
     ├── PRUEBAS.md
-    └── CONTINUIDAD.md     # estado, decisiones y cómo continuar
+    └── CONTINUIDAD.md        # decisiones, historial y cómo continuar
 ```
 
 ## Pruebas
 
 ```bash
-python3 -m unittest discover -s tests -v       # 45 pruebas offline
+python3 -m unittest discover -s tests -v       # 55 pruebas offline
 python3 tests/interop_kkk.py                   # contra el receptor C++ del kkk
 python3 enviar.py --file mi_video.mp4 --to 58548838 --dry-run
 ```
@@ -217,11 +281,20 @@ no existe, se omite y no falla.
 | `TODUS_TOKEN` | JWT ya obtenido (evita pedirlo) | vacío |
 | `TODUS_AUTH_URL` | endpoint del JWT | `https://auth.todus.cu/v2/auth/token` |
 | `TDS_COOKIES_FILE` | cookies de YouTube | `~/.config/tds/cookies.txt` |
-| `MAX_VIDEO_BYTES` | límite de descarga | `26214400` (25 MiB) |
+| `TDS_YTDLP_PLAYER_CLIENT` | fuerza cliente YouTube (`web_embedded`, etc.) | automático |
+| `MAX_VIDEO_BYTES` | límite opcional de descarga | sin límite |
 | `SEND_DELAY_MS` | pausa entre tramas | `120` |
 | `TDS_NUMBER` | número del receptor (receptor.sh) | pregunta / `58548838` |
 | `TDS_OUT_DIR` | salida del receptor | `/sdcard/Download` o `recibidos/` |
 | `TDS_RECEIVER_BIN` | binario C++ del kkk | `../kkk/build/client/tds_receiver` |
+| `TDS_CODESPACE` | Codespace concreto | detectar/reutilizar/crear |
+| `TDS_REPO` | repo del Codespace | `Michel30006/todus-lite` |
+| `TDS_REMOTE_DIR` | carpeta remota de trabajo | `/tmp/todus-lite` |
+| `TDS_GH_TOKEN_DIR` | carpeta de tokens multi-cuenta | `~/.config/todus-lite/tokens` |
+| `TDS_GH_TOKEN_FILE` | token único (compatibilidad) | vacío |
+| `TDS_KEEP_CODESPACE` | no apagar el Codespace | `0` |
+| `TDS_ALLOW_SELF` | permitir destino == emisor | `0` |
+| `TDS_STALL_SECONDS` | cancelar si no hay avance | `300` |
 
 ## Cómo funciona (resumen)
 
@@ -250,8 +323,9 @@ el binario C++: SHA-256 idéntico byte a byte. Ver
 - No se incluyen tokens ni contraseñas en el repositorio. El JWT se obtiene en
   cada ejecución o se pasa por `TODUS_TOKEN`.
 - Las cookies de YouTube son equivalentes a la sesión de tu cuenta de Google:
-  trátalas como una contraseña. En el Codespace están en un secreto cifrado y
-  en `~/.config/tds/cookies.txt` con permisos `600`.
+  trátalas como una contraseña. En local están en
+  `~/.config/todus-lite/cookies.txt` (600) y en el Codespace en
+  `~/.config/tds/cookies.txt` (600). No se publican en el repo.
 - El vídeo viaja por TLS hasta el servidor de ToDus; no hay cifrado extremo a
   extremo propio (igual que en kkk).
 - El receptor acepta cualquier trama TDS1 dirigida a su cuenta; no hay firma
@@ -263,24 +337,36 @@ el binario C++: SHA-256 idéntico byte a byte. Ver
 
 - ToDus es un protocolo no documentado oficialmente; puede cambiar sin aviso.
 - El receptor debe conectarse antes que el emisor.
-- Si el emisor se corta a mitad, hay que reenviar desde el principio (no hay
-  reanudación persistente todavía). El receptor tolera duplicados.
+- Si se corta la **descarga**, se reanuda al volver a ejecutar (HTTP Range /
+  yt-dlp `.part`). Si se corta el **envío** por ToDus, hay que reiniciarlo
+  desde el principio; el receptor tolera duplicados.
 - El DNS de ToDus puede fallar de forma intermitente; hay reintentos y caché
   de IP, pero puede tardar unos segundos.
 - YouTube cambia a menudo: si falla, actualiza `yt-dlp` y renueva las cookies.
-  Sin Deno/EJS, YouTube solo devuelve imágenes (storyboards).
+  Sin Deno/EJS, YouTube solo devuelve imágenes (storyboards). Si el cliente
+  por defecto devuelve HTTP 403, el flujo reintenta con `web_embedded`; se
+  puede forzar con `TDS_YTDLP_PLAYER_CLIENT`.
+- La cuenta `Michel30006` puede recibir HTTP 402 por facturación/cuota al
+  arrancar su Codespace. `descargar` prueba otra cuenta o reutiliza un
+  Codespace existente. Las cuentas sin acceso al repo privado no pueden crear
+  uno nuevo.
 - El DNS/red de ToDus puede fallar de forma intermitente también desde el
   Codespace; el emisor reintenta y acepta un JWT por `--token`.
-- Un vídeo grande tarda mucho: el límite práctico es el ritmo de ToDus.
+- Un vídeo grande tarda mucho: sin límite, un 720p puede superar 100 MiB y
+  tardar horas. El límite práctico es el ritmo de ToDus.
+- Las descargas son **reanudables**: si se corta la conexión, vuelve a
+  ejecutar el mismo comando y continúa desde el último byte. HTTP usa
+  `Range` + `.part`; yt-dlp conserva su directorio `.tds-ytdlp-*`.
 
 ## Documentación
 
 | Documento | Contenido |
 |---|---|
+| [docs/ESTADO.md](docs/ESTADO.md) | Estado actual, funcionalidades, cuentas, Codespaces, evidencia y pendientes. |
 | [docs/USO.md](docs/USO.md) | Guía paso a paso para Codespace y teléfono. |
 | [docs/PROTOCOLO.md](docs/PROTOCOLO.md) | Tabla, trama, auth, XMPP y compatibilidad. |
-| [docs/PRUEBAS.md](docs/PRUEBAS.md) | Pruebas offline, interop C++ y ToDus real. |
-| [docs/CONTINUIDAD.md](docs/CONTINUIDAD.md) | Estado actual, decisiones, pendientes y registro para otra IA. |
+| [docs/PRUEBAS.md](docs/PRUEBAS.md) | Pruebas offline, interop C++, ToDus real y YouTube. |
+| [docs/CONTINUIDAD.md](docs/CONTINUIDAD.md) | Decisiones, historial y cómo retomar el proyecto. |
 
 ## Licencia
 
