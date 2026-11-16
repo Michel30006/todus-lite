@@ -1,5 +1,7 @@
 import hashlib
+import http.server
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -7,6 +9,9 @@ from tds_lite.download import (
     DownloadError,
     _is_media_file,
     _sha256_file,
+    _url_key,
+    _ytdlp_format,
+    download,
     download_media,
     needs_extractor,
 )
@@ -36,6 +41,136 @@ class TestUrlDetection(unittest.TestCase):
     def test_non_http_rejected(self):
         with self.assertRaises(DownloadError):
             download_media("ftp://example.com/video.mp4", ".")
+
+
+class TestQualityFormat(unittest.TestCase):
+    def test_360_limits_height(self):
+        fmt = _ytdlp_format(360)
+        self.assertIn("[height<=360]", fmt)
+        self.assertNotIn("[height<=480]", fmt)
+
+    def test_480_limits_height(self):
+        fmt = _ytdlp_format(480)
+        self.assertIn("[height<=480]", fmt)
+
+    def test_720_limits_height(self):
+        fmt = _ytdlp_format(720)
+        self.assertIn("[height<=720]", fmt)
+        self.assertNotIn("[height<=480]", fmt)
+
+    def test_without_ffmpeg_uses_combined_format(self):
+        fmt = _ytdlp_format(720, merge=False)
+        self.assertNotIn("+ba", fmt)
+        self.assertIn("b[ext=mp4][height<=720][vcodec!=none]", fmt)
+
+    def test_avoids_audio_only_fallback(self):
+        for height in (360, 480, 720):
+            fmt = _ytdlp_format(height)
+            self.assertEqual(fmt.count("[vcodec!=none]"), 2)
+
+
+class TestResumeDownload(unittest.TestCase):
+    BODY = bytes(range(256)) * 256
+
+    def _serve(self, handler):
+        class QuietServer(http.server.ThreadingHTTPServer):
+            def handle_error(self, request, client_address):
+                pass
+
+        server = QuietServer(("127.0.0.1", 0), handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        port = server.server_address[1]
+        return f"http://127.0.0.1:{port}/video.mp4"
+
+    def test_resumes_existing_partial(self):
+        body = self.BODY
+        half = len(body) // 2
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                data = body
+                start = 0
+                rng = self.headers.get("Range")
+                if rng:
+                    start = int(rng.split("=", 1)[1].split("-", 1)[0])
+                payload = data[start:]
+                self.send_response(206 if start else 200)
+                if start:
+                    self.send_header(
+                        "Content-Range",
+                        f"bytes {start}-{len(data) - 1}/{len(data)}",
+                    )
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def log_message(self, fmt, *args):
+                pass
+
+        url = self._serve(Handler)
+        with tempfile.TemporaryDirectory() as tmp:
+            dest = Path(tmp)
+            partial = dest / f".tds-{_url_key(url)}.part"
+            partial.write_bytes(body[:half])
+            path, size, digest = download(
+                url, dest, show_progress=False, attempts=1
+            )
+            self.assertEqual(path.read_bytes(), body)
+            self.assertEqual(size, len(body))
+            self.assertEqual(digest, hashlib.sha256(body).hexdigest())
+            self.assertFalse(partial.exists())
+
+    def test_retries_after_connection_drop(self):
+        body = self.BODY
+        state = {"calls": 0}
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                state["calls"] += 1
+                data = body
+                start = 0
+                rng = self.headers.get("Range")
+                if rng:
+                    start = int(rng.split("=", 1)[1].split("-", 1)[0])
+                if state["calls"] == 1 and not rng:
+                    self.send_response(200)
+                    self.send_header("Content-Length", str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data[: len(data) // 2])
+                    self.wfile.flush()
+                    self.close_connection = True
+                    return
+                payload = data[start:]
+                self.send_response(206 if start else 200)
+                if start:
+                    self.send_header(
+                        "Content-Range",
+                        f"bytes {start}-{len(data) - 1}/{len(data)}",
+                    )
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def log_message(self, fmt, *args):
+                pass
+
+        url = self._serve(Handler)
+        with tempfile.TemporaryDirectory() as tmp:
+            dest = Path(tmp)
+            path, size, digest = download(
+                url,
+                dest,
+                show_progress=False,
+                attempts=3,
+                retry_delay=0,
+            )
+            self.assertGreaterEqual(state["calls"], 2)
+            self.assertEqual(path.read_bytes(), body)
+            self.assertEqual(size, len(body))
+            self.assertEqual(digest, hashlib.sha256(body).hexdigest())
 
 
 class TestMediaDetection(unittest.TestCase):

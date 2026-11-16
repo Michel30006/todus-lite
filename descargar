@@ -1,29 +1,57 @@
 #!/usr/bin/env bash
 set -u
 
-CS_NAME="${TDS_CODESPACE:-todus-lite-4q6p9jqxv9rxfqpp9}"
+CS_NAME="${TDS_CODESPACE:-}"
+REPO="${TDS_REPO:-Michel30006/todus-lite}"
+BRANCH="${TDS_BRANCH:-main}"
+MACHINE="${TDS_MACHINE:-basicLinux32gb}"
 FROM="${TODUS_SENDER:-58799457}"
-MAX_MIB="${TDS_MAX_MIB:-}"
-REMOTE_DIR="/workspaces/todus-lite"
+MAX_MIB="${TDS_MAX_MIB:-0}"
+REMOTE_DIR="${TDS_REMOTE_DIR:-/tmp/todus-lite}"
 OUT_DIR="${TDS_OUT_DIR:-/sdcard/Download}"
 REMOTE_RECEIVER=0
+KEEP_CODESPACE="${TDS_KEEP_CODESPACE:-0}"
+ALLOW_SELF="${TDS_ALLOW_SELF:-0}"
+STALL_SECONDS="${TDS_STALL_SECONDS:-300}"
 
 usage() {
   cat <<'EOF'
 Uso: descargar [--remoto]
 
-Pide una URL y un numero, arranca el receptor local (salvo --remoto),
-se conecta al Codespace y envia el video por ToDus.
+Pide una URL, la calidad (360/480/720) y un numero, arranca el receptor
+local (salvo --remoto), conecta al Codespace (lo arranca si esta parado) y
+envia el video por ToDus.
 
   --remoto, -r   No arrancar receptor local; el telefono destino ya lo tiene.
+  --keep         No parar el Codespace al terminar.
+  --self         Permitir destino == emisor (normalmente no).
+
+Tras un envio correcto, borra el video descargado del Codespace.
   -h, --help     Esta ayuda.
 
 Variables:
-  TDS_CODESPACE  nombre del Codespace
+  TDS_CODESPACE  nombre del Codespace (vacio = detectar/crear el del repo)
+  TDS_REPO       repo del Codespace (def. Michel30006/todus-lite)
+  TDS_BRANCH     rama al crear el Codespace (def. main)
+  TDS_MACHINE    maquina al crear el Codespace (def. basicLinux32gb)
   TODUS_SENDER   numero emisor (def. 58799457)
-  TDS_MAX_MIB    limite de descarga en MiB (def. sin limite)
+  TDS_MAX_MIB    limite opcional en MiB (vacio o 0 = sin limite)
   TDS_OUT_DIR    salida del receptor (def. /sdcard/Download)
-  GH_TOKEN       token de GitHub (si no, usa la sesion de gh)
+  TDS_KEEP_CODESPACE=1  no parar el Codespace
+  TDS_ALLOW_SELF=1      permitir destino == emisor
+  TDS_STALL_SECONDS=N   cancelar si el envio no avanza en N s (def. 300; 0 = nunca)
+  TDS_GH_TOKEN_DIR      carpeta con tokens *.token (def. ~/.config/todus-lite/tokens)
+  TDS_GH_TOKEN_FILE     fichero de token (compatibilidad)
+  TDS_COOKIES_FILE      cookies Netscape a copiar al Codespace
+  GH_TOKEN              token de GitHub (si esta, se prueba primero)
+
+Tokens multi-cuenta:
+  mkdir -p ~/.config/todus-lite/tokens
+  printf '%s' 'ghp_...' > ~/.config/todus-lite/tokens/cuenta1.token
+  chmod 600 ~/.config/todus-lite/tokens/cuenta1.token
+  El script prueba cada token; si uno no tiene cuota/facturacion, pasa al
+  siguiente. La cuenta debe tener acceso al repo (es privado) para crear el
+  Codespace.
 
 Primera vez:
   gh auth login -h github.com
@@ -31,12 +59,16 @@ Primera vez:
 EOF
 }
 
-case "${1:-}" in
-  -h|--help) usage; exit 0 ;;
-  -r|--remoto|--no-receptor) REMOTE_RECEIVER=1 ;;
-  "") ;;
-  *) echo "Opcion desconocida: $1"; usage; exit 2 ;;
-esac
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -h|--help) usage; exit 0 ;;
+    -r|--remoto|--no-receptor) REMOTE_RECEIVER=1 ;;
+    --keep) KEEP_CODESPACE=1 ;;
+    --self) ALLOW_SELF=1 ;;
+    *) echo "Opcion desconocida: $1"; usage; exit 2 ;;
+  esac
+  shift
+done
 
 case "$FROM" in
   *[!0-9]*|"") echo "TODUS_SENDER invalido: $FROM"; exit 1 ;;
@@ -44,6 +76,11 @@ esac
 case "$MAX_MIB" in
   *[!0-9]*) echo "TDS_MAX_MIB invalido: $MAX_MIB"; exit 1 ;;
 esac
+if [ "$MAX_MIB" -eq 0 ]; then
+  LIMIT_TXT='sin limite'
+else
+  LIMIT_TXT="${MAX_MIB} MiB"
+fi
 
 SCRIPT_PATH=$(readlink -f "$0")
 LOCAL_DIR=$(cd "$(dirname "$SCRIPT_PATH")" && pwd)
@@ -56,7 +93,15 @@ printf 'URL del video: '
 read -r URL
 [ -n "$URL" ] || { echo 'URL vacia.'; exit 1; }
 
-printf 'Numero de telefono destino (8 digitos o JID): '
+printf 'Calidad (360/480/720) [480]: '
+read -r QUALITY
+QUALITY=${QUALITY:-480}
+case "$QUALITY" in
+  360|480|720) ;;
+  *) echo 'Calidad invalida. Usa 360, 480 o 720.'; exit 1 ;;
+esac
+
+printf 'Numero de telefono destino (8 digitos o JID; emisor %s): ' "$FROM"
 read -r NUM
 [ -n "$NUM" ] || { echo 'Numero vacio.'; exit 1; }
 
@@ -64,10 +109,26 @@ NUM=${NUM// /}
 NUM=${NUM#+}
 [ -n "$NUM" ] || { echo 'Numero invalido.'; exit 1; }
 
-TOKEN_FILE="${TDS_GH_TOKEN_FILE:-$HOME/.config/todus-lite/gh_token}"
-if [ -z "${GH_TOKEN:-}" ] && [ -s "$TOKEN_FILE" ]; then
-  GH_TOKEN=$(cat "$TOKEN_FILE")
-  export GH_TOKEN
+normalize_jid() {
+  PYTHONPATH="$LOCAL_DIR" python3 -c \
+    'import sys; from tds_lite.protocol import normalize_number; print(normalize_number(sys.argv[1]))' \
+    "$1"
+}
+if ! NUM_JID=$(normalize_jid "$NUM" 2>/tmp/todus_num.err); then
+  echo "Numero de destino invalido: $NUM"
+  cat /tmp/todus_num.err 2>/dev/null
+  exit 1
+fi
+if ! FROM_JID=$(normalize_jid "$FROM" 2>/tmp/todus_from.err); then
+  echo "TODUS_SENDER invalido: $FROM"
+  cat /tmp/todus_from.err 2>/dev/null
+  exit 1
+fi
+if [ "$NUM_JID" = "$FROM_JID" ] && [ "$ALLOW_SELF" != "1" ]; then
+  echo "El destino es el mismo numero que el emisor ($NUM_JID)."
+  echo 'Usa el numero del telefono receptor, por ejemplo 58548838.'
+  echo 'Si de verdad quieres enviarte a ti mismo: descargar --self'
+  exit 1
 fi
 
 if ! command -v gh >/dev/null 2>&1; then
@@ -76,29 +137,344 @@ if ! command -v gh >/dev/null 2>&1; then
   exit 1
 fi
 
-echo 'Comprobando sesion de GitHub...'
-if ! CS_LIST=$(gh codespace list --json name 2>/tmp/todus_gh.err); then
-  echo 'No hay sesion valida de GitHub o falta el permiso "codespace".'
-  echo 'Ejecuta una vez:'
-  echo '  gh auth login -h github.com'
-  echo '  gh auth refresh -h github.com -s codespace'
-  tail -n 3 /tmp/todus_gh.err 2>/dev/null
+TOKEN_DIR="${TDS_GH_TOKEN_DIR:-$HOME/.config/todus-lite/tokens}"
+TOKEN_FILES=()
+if [ -n "${TDS_GH_TOKEN_FILE:-}" ]; then
+  TOKEN_FILES+=("$TDS_GH_TOKEN_FILE")
+fi
+for f in "$TOKEN_DIR"/*.token "$TOKEN_DIR"/*.txt; do
+  [ -f "$f" ] && TOKEN_FILES+=("$f")
+done
+LEGACY_TOKEN_FILE="$HOME/.config/todus-lite/gh_token"
+[ -s "$LEGACY_TOKEN_FILE" ] && TOKEN_FILES+=("$LEGACY_TOKEN_FILE")
+
+TOKENS=()
+[ -n "${GH_TOKEN:-}" ] && TOKENS+=("$GH_TOKEN")
+for f in "${TOKEN_FILES[@]}"; do
+  [ -s "$f" ] || continue
+  t=$(tr -d '\r\n' < "$f")
+  [ -n "$t" ] || continue
+  TOKENS+=("$t")
+done
+UNIQ_TOKENS=()
+for t in "${TOKENS[@]}"; do
+  dup=0
+  for u in "${UNIQ_TOKENS[@]}"; do
+    if [ "$t" = "$u" ]; then
+      dup=1
+      break
+    fi
+  done
+  [ "$dup" -eq 0 ] && UNIQ_TOKENS+=("$t")
+done
+TOKENS=("${UNIQ_TOKENS[@]}")
+if [ "${#TOKENS[@]}" -eq 0 ]; then
+  echo 'No hay token de GitHub configurado.'
+  echo "Crea $TOKEN_DIR/cuenta.token con un PAT que tenga scope codespace."
   exit 1
 fi
-case "$CS_LIST" in
-  *"\"$CS_NAME\""*) ;;
-  *)
-    echo "No encuentro el Codespace '$CS_NAME'."
-    echo 'Comprueba: gh codespace list'
-    exit 1
-    ;;
-esac
 
+STARTED=0
+CREATED=0
 RECV_PID=""
+SSH_PID=""
+TEE_PID=""
+SEND_FIFO=""
+cleanup() {
+  rc=$?
+  trap - EXIT INT TERM
+  if [ -n "${SSH_PID:-}" ] && kill -0 "$SSH_PID" 2>/dev/null; then
+    kill "$SSH_PID" 2>/dev/null || true
+  fi
+  if [ -n "${TEE_PID:-}" ] && kill -0 "$TEE_PID" 2>/dev/null; then
+    kill "$TEE_PID" 2>/dev/null || true
+  fi
+  [ -n "${SEND_FIFO:-}" ] && rm -f "$SEND_FIFO"
+  if [ -n "${RECV_PID:-}" ] && kill -0 "$RECV_PID" 2>/dev/null; then
+    kill "$RECV_PID" 2>/dev/null || true
+  fi
+  if [ -n "${CS_NAME:-}" ] && [ "${SEND_RC:-1}" -eq 0 ]; then
+    echo 'Borrando el video del Codespace...'
+    timeout 20 gh codespace ssh -c "$CS_NAME" -- \
+      "rm -rf '$REMOTE_DIR/descargas' '$REMOTE_DIR'/.tds-ytdlp-*" \
+      >/dev/null 2>&1 || true
+  fi
+  if [ "$KEEP_CODESPACE" != "1" ] && [ -n "${CS_NAME:-}" ]; then
+    echo 'Parando el Codespace...'
+    gh api -X POST "user/codespaces/$CS_NAME/stop" --silent >/dev/null 2>&1 || true
+  fi
+  exit "$rc"
+}
+trap cleanup EXIT INT TERM
+
+pick_codespace() {
+  printf '%s' "$1" | python3 -c '
+import json, sys
+repo = sys.argv[1]
+data = json.load(sys.stdin)
+matches = [x for x in data if x.get("repository") == repo]
+for x in matches:
+    if x.get("state") == "Available":
+        print(x["name"])
+        break
+else:
+    if matches:
+        print(matches[0]["name"])
+' "$REPO"
+}
+
+pick_any_codespace() {
+  printf '%s' "$1" | python3 -c '
+import json, sys
+data = json.load(sys.stdin)
+for x in data:
+    if x.get("state") == "Available":
+        print(x["name"])
+        break
+else:
+    if data:
+        print(data[0]["name"])
+'
+}
+
+codespace_state() {
+  gh codespace list --json name,state 2>/dev/null | python3 -c 'import json,sys; data=json.load(sys.stdin); print(next((x.get("state","") for x in data if x.get("name")==sys.argv[1]), ""))' "$CS_NAME"
+}
+
+try_token() {
+  local token="$1"
+  local account cs_list cs_state create_out
+  export GH_TOKEN="$token"
+  account=$(gh api user --jq .login 2>/dev/null || true)
+  if [ -z "$account" ]; then
+    echo 'Token invalido o sin permiso para leer la cuenta.'
+    return 1
+  fi
+  echo "Cuenta GitHub: $account"
+  if ! cs_list=$(gh codespace list --json name,state,repository 2>/tmp/todus_gh.err); then
+    echo "El token de $account no puede listar Codespaces (scope codespace)."
+    tail -n 2 /tmp/todus_gh.err 2>/dev/null
+    return 1
+  fi
+  CS_NAME="${CS_NAME_OVERRIDE:-}"
+  if [ -n "$CS_NAME" ]; then
+    cs_state=$(printf '%s' "$cs_list" | python3 -c 'import json,sys; data=json.load(sys.stdin); print(next((x.get("state","") for x in data if x.get("name")==sys.argv[1]), ""))' "$CS_NAME")
+    if [ -z "$cs_state" ]; then
+      echo "La cuenta $account no ve el Codespace $CS_NAME."
+      CS_NAME=""
+      return 1
+    fi
+  else
+    CS_NAME=$(pick_codespace "$cs_list")
+    if [ -z "$CS_NAME" ]; then
+      CS_NAME=$(pick_any_codespace "$cs_list")
+      if [ -n "$CS_NAME" ]; then
+        echo "La cuenta $account no tiene Codespace para $REPO; reutilizo $CS_NAME."
+      fi
+    fi
+    if [ -z "$CS_NAME" ]; then
+      if ! gh api "repos/$REPO" --silent >/dev/null 2>/tmp/todus_repo.err; then
+        echo "La cuenta $account no tiene acceso a $REPO (repo privado)."
+        tail -n 2 /tmp/todus_repo.err 2>/dev/null
+        return 1
+      fi
+      echo "La cuenta $account no tiene Codespace para $REPO; creando uno..."
+      if ! create_out=$(gh codespace create -R "$REPO" -b "$BRANCH" -m "$MACHINE" \
+          --default-permissions --idle-timeout 30m --retention-period 720h \
+          --display-name todus-lite 2>/tmp/todus_create.err); then
+        if grep -qiE 'HTTP 402|billing issue|currently disallowed' /tmp/todus_create.err 2>/dev/null; then
+          echo "La cuenta $account no puede crear Codespaces por facturacion/cuota."
+          return 2
+        fi
+        echo "No se pudo crear el Codespace con $account."
+        tail -n 5 /tmp/todus_create.err 2>/dev/null
+        return 1
+      fi
+      CREATED=1
+      printf '%s\n' "$create_out" | tail -n 3
+      CS_NAME=""
+      for _ in $(seq 1 60); do
+        if cs_list=$(gh codespace list --json name,state,repository 2>/dev/null); then
+          CS_NAME=$(pick_codespace "$cs_list")
+          [ -n "$CS_NAME" ] && break
+        fi
+        sleep 5
+      done
+      if [ -z "$CS_NAME" ]; then
+        echo "El Codespace se creo con $account pero no aparece en la lista."
+        return 1
+      fi
+      echo "Codespace creado: $CS_NAME"
+    fi
+    cs_state=$(printf '%s' "$cs_list" | python3 -c 'import json,sys; data=json.load(sys.stdin); print(next((x.get("state","") for x in data if x.get("name")==sys.argv[1]), ""))' "$CS_NAME")
+  fi
+  CS_READY=0
+  for _ in $(seq 1 180); do
+    case "$cs_state" in
+      Available)
+        CS_READY=1
+        break
+        ;;
+      Shutdown)
+        if [ "$STARTED" -eq 0 ]; then
+          echo "Codespace apagado; arrancandolo con $account..."
+          if ! gh api -X POST "user/codespaces/$CS_NAME/start" --silent \
+            >/tmp/todus_start.out 2>/tmp/todus_start.err; then
+            echo 'No se pudo arrancar el Codespace.'
+            if grep -qiE 'HTTP 402|billing issue|currently disallowed' /tmp/todus_start.err 2>/dev/null; then
+              echo "La cuenta $account no tiene cuota/facturacion para arrancar Codespaces."
+              return 2
+            fi
+            tail -n 5 /tmp/todus_start.err 2>/dev/null
+            return 1
+          fi
+          STARTED=1
+        fi
+        ;;
+      ShuttingDown|Starting|Provisioning|Queued|Created)
+        echo "Codespace en estado $cs_state; esperando..."
+        ;;
+      "")
+        :
+        ;;
+      *)
+        echo "El Codespace esta en estado no utilizable: $cs_state"
+        return 1
+        ;;
+    esac
+    sleep 5
+    cs_state=$(codespace_state)
+  done
+  if [ "$CS_READY" -ne 1 ]; then
+    echo "El Codespace no llego a Available (estado: ${cs_state:-desconocido})."
+    return 1
+  fi
+  echo "Codespace listo: $CS_NAME ($account)"
+  ACCOUNT="$account"
+  return 0
+}
+
+CS_NAME_OVERRIDE="$CS_NAME"
+SELECTED=0
+TOKEN_INDEX=0
+for token in "${TOKENS[@]}"; do
+  TOKEN_INDEX=$((TOKEN_INDEX + 1))
+  echo "Probando token $TOKEN_INDEX/${#TOKENS[@]}..."
+  CS_NAME="$CS_NAME_OVERRIDE"
+  STARTED=0
+  CREATED=0
+  try_token "$token"
+  trc=$?
+  if [ "$trc" -eq 0 ]; then
+    SELECTED=1
+    break
+  fi
+  if [ "$trc" -eq 2 ]; then
+    echo 'Cuenta sin cuota/facturacion; probando el siguiente token.'
+  fi
+  if [ "$STARTED" -eq 1 ] || [ "$CREATED" -eq 1 ]; then
+    if [ -n "${CS_NAME:-}" ]; then
+      echo "Parando el Codespace fallido $CS_NAME..."
+      gh api -X POST "user/codespaces/$CS_NAME/stop" --silent >/dev/null 2>&1 || true
+    fi
+  fi
+  STARTED=0
+  CREATED=0
+done
+if [ "$SELECTED" -ne 1 ]; then
+  echo 'Ningun token pudo arrancar/crear un Codespace utilizable.'
+  echo 'Revisa facturacion/cuota: https://github.com/settings/billing'
+  echo "o agrega tokens en $TOKEN_DIR/*.token"
+  exit 1
+fi
+
+
+sync_remote_code() {
+  local archive="/tmp/todus_code_$$.tar.gz"
+  local attempt
+  if ! (cd "$LOCAL_DIR" && tar -czf "$archive" enviar.py tds_lite/*.py .devcontainer/setup.sh); then
+    rm -f "$archive"
+    return 1
+  fi
+  for attempt in 1 2 3 4 5 6 7 8; do
+    if gh codespace cp -e -c "$CS_NAME" "$archive" \
+        'remote:/tmp/todus_code.tar.gz' \
+        >/tmp/todus_cp.out 2>/tmp/todus_cp.err \
+      && gh codespace ssh -c "$CS_NAME" -- \
+        "mkdir -p '$REMOTE_DIR' && tar -xzf /tmp/todus_code.tar.gz -C '$REMOTE_DIR' && rm -f /tmp/todus_code.tar.gz" \
+        >/tmp/todus_tar.out 2>/tmp/todus_tar.err; then
+      rm -f "$archive"
+      return 0
+    fi
+    sleep 5
+  done
+  rm -f "$archive"
+  return 1
+}
+echo 'Sincronizando codigo al Codespace...'
+if ! sync_remote_code; then
+  echo 'No se pudo sincronizar el codigo al Codespace.'
+  tail -n 5 /tmp/todus_cp.err 2>/dev/null
+  tail -n 5 /tmp/todus_tar.err 2>/dev/null
+  exit 1
+fi
+echo 'Codigo sincronizado.'
+
+COOKIES_FILE="${TDS_COOKIES_FILE:-}"
+if [ -z "$COOKIES_FILE" ]; then
+  for c in "$HOME/.config/todus-lite/cookies.txt" "/sdcard/Download/juj.txt" "$HOME/.config/tds/cookies.txt"; do
+    if [ -s "$c" ]; then
+      COOKIES_FILE="$c"
+      break
+    fi
+  done
+fi
+
+configure_remote() {
+  local cookies="$1"
+  local remote_script b64
+  if [ -z "$cookies" ] || [ ! -s "$cookies" ]; then
+    echo 'Aviso: no encontre cookies; YouTube puede fallar.'
+    return 0
+  fi
+  echo "Configurando cookies y entorno en $CS_NAME..."
+  if ! gh codespace cp -e -c "$CS_NAME" "$cookies" 'remote:/tmp/tds_cookies.txt' \
+      >/tmp/todus_cp_cookies.out 2>/tmp/todus_cp_cookies.err; then
+    echo 'Aviso: no pude copiar las cookies al Codespace.'
+    tail -n 3 /tmp/todus_cp_cookies.err 2>/dev/null
+    return 0
+  fi
+  remote_script=$(cat <<EOF
+set -u
+cd '$REMOTE_DIR' || exit 1
+mkdir -p "\$HOME/.config/tds" "\$HOME/.config/yt-dlp"
+mv /tmp/tds_cookies.txt "\$HOME/.config/tds/cookies.txt"
+chmod 600 "\$HOME/.config/tds/cookies.txt"
+if [ -f .devcontainer/setup.sh ]; then
+  env -u TDS_COOKIES_B64 bash .devcontainer/setup.sh || true
+fi
+if ! command -v ffmpeg >/dev/null 2>&1; then
+  sudo apt-get update && sudo apt-get install -y ffmpeg
+fi
+python3 -c 'import yt_dlp' >/dev/null 2>&1 || python3 -m pip install --user -U 'yt-dlp[default]'
+test -s "\$HOME/.config/tds/cookies.txt"
+EOF
+)
+  b64=$(printf '%s' "$remote_script" | base64 | tr -d '\n')
+  if ! gh codespace ssh -c "$CS_NAME" -- "printf '%s' '$b64' | base64 -d | bash -s" \
+      >/tmp/todus_setup.out 2>/tmp/todus_setup.err; then
+    echo 'Aviso: no pude completar la configuracion remota.'
+    tail -n 5 /tmp/todus_setup.err 2>/dev/null
+    return 0
+  fi
+  echo 'Cookies y entorno remoto configurados.'
+}
+configure_remote "$COOKIES_FILE"
+
 RECV_LOG=""
 
 if [ "$REMOTE_RECEIVER" -eq 0 ]; then
-  EXISTING=$(pgrep -af '[r]eceptor.py' 2>/dev/null | head -n1 || true)
+  EXISTING=$(pgrep -af '[p]ython3 .*receptor\.py --number' 2>/dev/null | head -n1 || true)
   if [ -n "$EXISTING" ]; then
     EXISTING_NUM=$(printf '%s\n' "$EXISTING" | sed -n 's/.*--number[ =]\([^ ]*\).*/\1/p')
     if [ -n "$EXISTING_NUM" ] && [ "$EXISTING_NUM" != "$NUM" ]; then
@@ -155,12 +531,8 @@ NUM=\$(printf '%s' '$B64_NUM' | base64 -d)
 echo "Obteniendo token de ToDus..."
 TOKEN=\$(python3 -c 'from tds_lite.todus import fetch_token; print(fetch_token("$FROM", timeout=15, attempts=4))' 2>/dev/null || true)
 if [ -n "\$TOKEN" ]; then export TODUS_TOKEN="\$TOKEN"; fi
-echo "Enviando \$URL -> \$NUM ..."
-if [ -n "$MAX_MIB" ]; then
-  exec python3 -u enviar.py --url "\$URL" --to "\$NUM" --from "$FROM" --max-mib "$MAX_MIB" --delay 3 --retries 5 --ack-timeout 20
-else
-  exec python3 -u enviar.py --url "\$URL" --to "\$NUM" --from "$FROM" --delay 3 --retries 5 --ack-timeout 20
-fi
+echo "Enviando \$URL -> \$NUM (calidad ${QUALITY}p, limite ${LIMIT_TXT}) ..."
+exec python3 -u enviar.py --url "\$URL" --to "\$NUM" --from "$FROM" --quality "$QUALITY" --max-mib "$MAX_MIB" --delay 3 --retries 5 --ack-timeout 20 --delete-after-send
 EOF
 )
 B64_SCRIPT=$(printf '%s' "$REMOTE_SCRIPT" | base64 | tr -d '\n')
@@ -170,11 +542,64 @@ SEND_RC=1
 ATTEMPT=1
 while [ "$ATTEMPT" -le 5 ]; do
   echo "Conectando al Codespace (intento $ATTEMPT/5; si esta parado, puede tardar)..."
-  set -o pipefail
-  gh codespace ssh -c "$CS_NAME" -- "printf '%s' '$B64_SCRIPT' | base64 -d | bash -s" 2>&1 | tee -a "$SEND_LOG"
-  SEND_RC=${PIPESTATUS[0]}
-  set +o pipefail
+  SEND_FIFO="/tmp/todus_send_fifo_$$"
+  rm -f "$SEND_FIFO"
+  if ! mkfifo "$SEND_FIFO"; then
+    echo 'No se pudo crear el FIFO para el envio.'
+    SEND_RC=1
+    break
+  fi
+  tee -a "$SEND_LOG" < "$SEND_FIFO" &
+  TEE_PID=$!
+  gh codespace ssh -c "$CS_NAME" -- "printf '%s' '$B64_SCRIPT' | base64 -d | bash -s" >"$SEND_FIFO" 2>&1 &
+  SSH_PID=$!
+  LAST_MTIME=0
+  LAST_CHECK=$(date +%s)
+  STALLED=0
+  RECEIVED=0
+  while kill -0 "$SSH_PID" 2>/dev/null; do
+    sleep 5
+    NOW=$(date +%s)
+    RECV_MTIME=$(stat -c %Y "$RECV_LOG" 2>/dev/null || echo 0)
+    SEND_MTIME=$(stat -c %Y "$SEND_LOG" 2>/dev/null || echo 0)
+    LAST=$RECV_MTIME
+    [ "$SEND_MTIME" -gt "$LAST" ] && LAST=$SEND_MTIME
+    if [ "$LAST" -gt "$LAST_MTIME" ]; then
+      LAST_MTIME=$LAST
+      LAST_CHECK=$NOW
+    fi
+    if [ -n "$RECV_LOG" ] && grep -q 'ARCHIVO RECIBIDO' "$RECV_LOG" 2>/dev/null; then
+      RECEIVED=1
+      break
+    fi
+    if [ "$STALL_SECONDS" -gt 0 ] && [ $((NOW - LAST_CHECK)) -ge "$STALL_SECONDS" ]; then
+      STALLED=1
+      break
+    fi
+  done
+  if [ "$RECEIVED" -eq 1 ]; then
+    kill "$SSH_PID" 2>/dev/null || true
+    wait "$SSH_PID" 2>/dev/null
+    SEND_RC=0
+  elif [ "$STALLED" -eq 1 ]; then
+    echo "El envio dejo de avanzar durante ${STALL_SECONDS}s; lo cancelo."
+    kill "$SSH_PID" 2>/dev/null || true
+    wait "$SSH_PID" 2>/dev/null
+    SEND_RC=124
+  else
+    wait "$SSH_PID"
+    SEND_RC=$?
+  fi
+  kill "$TEE_PID" 2>/dev/null || true
+  wait "$TEE_PID" 2>/dev/null
+  rm -f "$SEND_FIFO"
+  SSH_PID=""
+  TEE_PID=""
+  SEND_FIFO=""
   if [ "$SEND_RC" -eq 0 ]; then
+    break
+  fi
+  if [ "$STALLED" -eq 1 ]; then
     break
   fi
   if [ -n "$RECV_LOG" ]; then
@@ -200,7 +625,10 @@ while [ "$ATTEMPT" -le 5 ]; do
 done
 echo "Log del emisor: $SEND_LOG"
 
-if [ "$SEND_RC" -ne 0 ]; then
+if [ "$SEND_RC" -eq 124 ]; then
+  echo "El envio se quedo sin avanzar (${STALL_SECONDS}s)."
+  echo 'Vuelve a ejecutar descargar; la descarga esta cacheada.'
+elif [ "$SEND_RC" -ne 0 ]; then
   echo "El envio fallo (codigo $SEND_RC)."
   echo 'Si el error menciona permisos o scope:'
   echo '  gh auth refresh -h github.com -s codespace'
@@ -228,6 +656,21 @@ elif [ "$REMOTE_RECEIVER" -eq 0 ]; then
   echo 'El receptor ya estaba en marcha; revisa su log.'
 else
   echo 'Revisa el telefono destino: el archivo estara en /sdcard/Download.'
+fi
+
+SEND_SHA=$(sed -n 's/^  sha256:  //p' "$SEND_LOG" 2>/dev/null | tail -n1)
+RECV_SHA=$(sed -n 's/^  sha256:  //p' "$RECV_LOG" 2>/dev/null | tail -n1)
+if [ -n "$SEND_SHA" ] && [ -n "$RECV_SHA" ]; then
+  if [ "$SEND_SHA" = "$RECV_SHA" ]; then
+    echo "SHA-256 verificado: $RECV_SHA"
+  else
+    echo 'ERROR: el SHA-256 del emisor y del receptor no coincide.'
+    echo "  emisor:   $SEND_SHA"
+    echo "  receptor: $RECV_SHA"
+    SEND_RC=1
+  fi
+elif [ "$SEND_RC" -eq 0 ]; then
+  echo 'Aviso: no pude comparar el SHA-256 del emisor y del receptor.'
 fi
 
 if [ "$SEND_RC" -eq 0 ]; then

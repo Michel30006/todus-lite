@@ -5,8 +5,10 @@ Uso interactivo (lo normal en el codespace):
 
     python3 enviar.py
 
-El script pide el enlace del video y el numero de destino, descarga el fichero,
-lo convierte al texto de la tabla v1 y lo envia en tramas TDS1 por ToDus.
+El script pide el enlace y el numero de destino; la calidad se elige con
+--quality (360/480/720, def. 480). Descarga el fichero, lo convierte al texto
+de la tabla v1 y lo envia en tramas TDS1 por ToDus. Las descargas se reanudan
+si se corta la conexion.
 
 El receptor (receptor.py o el binario C++ tds_receiver del kkk) debe estar
 escuchando ANTES de lanzar el envio. Este script espera unos segundos tras
@@ -15,7 +17,7 @@ conectar para dar tiempo a que el receptor este listo.
 Variables de entorno utiles:
     TODUS_SENDER        numero emisor (def. 58799457; se normaliza con 53)
     TODUS_AUTH_URL      endpoint de token (def. https://auth.todus.cu/v2/auth/token)
-    MAX_VIDEO_BYTES     limite de descarga en bytes (def. 26214400 = 25 MiB)
+    MAX_VIDEO_BYTES     limite opcional de descarga en bytes (def. sin limite)
     SEND_DELAY_MS       pausa entre tramas (def. 120 ms)
 """
 
@@ -50,7 +52,7 @@ DEFAULT_RETRIES = 3
 DEFAULT_COOKIES = Path.home() / ".config" / "tds" / "cookies.txt"
 
 
-def _env_int(name: str, default: int) -> int:
+def _env_int(name: str, default: int | None) -> int | None:
     value = os.environ.get(name)
     if not value:
         return default
@@ -89,6 +91,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="navegador del que tomar cookies (chrome, firefox, ...)",
     )
     parser.add_argument("--file", help="fichero local ya descargado (omite descarga)")
+    parser.add_argument(
+        "--delete-after-send",
+        action="store_true",
+        help="borrar el video descargado del Codespace tras enviarlo",
+    )
     parser.add_argument("--to", help=f"numero destino (def. {DEFAULT_RECIPIENT})")
     parser.add_argument(
         "--from",
@@ -102,7 +109,14 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--max-mib",
         type=float,
-        help="limite de descarga en MiB (def. 25 o $MAX_VIDEO_BYTES)",
+        help="limite opcional de descarga en MiB; 0 o vacio = sin limite",
+    )
+    parser.add_argument(
+        "--quality",
+        type=int,
+        choices=(360, 480, 720),
+        default=480,
+        help="calidad maxima del video: 360, 480 o 720 (def. 480)",
     )
     parser.add_argument(
         "--out",
@@ -167,7 +181,7 @@ def resolve_source(args: argparse.Namespace) -> tuple[Path, int, str]:
         if not path.is_file():
             raise SystemExit(f"No existe el fichero: {path}")
         data = path.read_bytes()
-        if max_bytes is not None and len(data) > max_bytes:
+        if max_bytes and len(data) > max_bytes:
             raise SystemExit(
                 f"El fichero pesa {human_bytes(len(data))} y el límite es "
                 f"{human_bytes(max_bytes)}"
@@ -185,11 +199,12 @@ def resolve_source(args: argparse.Namespace) -> tuple[Path, int, str]:
         cookies = str(DEFAULT_COOKIES)
     if cookies:
         print(f"Cookies: {cookies}")
-    print(f"Descargando: {url}")
+    print(f"Descargando ({args.quality}p): {url}")
     path, size, digest = download_media(
         url,
         dest_dir=args.out,
         max_bytes=max_bytes,
+        max_height=args.quality,
         cookies=cookies,
         cookies_from_browser=args.cookies_from_browser,
     )
@@ -382,7 +397,20 @@ def main(argv: list[str]) -> int:
     print(f"  tamano:  {size} bytes")
     print(f"  sha256:  {digest}")
     print("  El receptor debe reconstruir el fichero y mostrarlo en su terminal.")
+    if args.delete_after_send and not args.file:
+        _remove_downloaded(path)
     return 0
+
+
+def _remove_downloaded(path: Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+        parent = path.parent
+        if parent.is_dir() and not any(parent.iterdir()):
+            parent.rmdir()
+        print("Video borrado del Codespace.")
+    except OSError as exc:
+        print(f"Aviso: no pude borrar {path}: {exc}", file=sys.stderr)
 
 
 if __name__ == "__main__":
